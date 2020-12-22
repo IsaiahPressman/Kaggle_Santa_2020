@@ -12,7 +12,7 @@ with contextlib.redirect_stdout(io.StringIO()):
 
 
 def get_game_result(agents):
-    env = make('mab')
+    env = make('mab', debug=True)
     env.run(agents)
     
     p1_score = env.steps[-1][0]['reward']
@@ -51,20 +51,25 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     print(f'{Path(args.agent1_path).stem} -vs- {Path(args.agent2_path).stem}')
-    with multiprocessing.Pool(processes=args.n_workers) as pool:
-        agent_paths_broadcasted = []
-        for i in range(args.n_games):
-            agent_paths_broadcasted.append((args.agent1_path, args.agent2_path))
-        
-        results = pool.map(get_game_result, agent_paths_broadcasted)
-        p1_scores = []
-        p2_scores = []
-        for i, result in enumerate(results):
-            p1_scores.append(result[0])
-            p2_scores.append(result[1])
-            print(f'Round {i+1}: {p1_scores[-1]} - {p2_scores[-1]}')
-        p1_scores = np.array(p1_scores)
-        p2_scores = np.array(p2_scores)
-        print(f'Mean scores: {p1_scores.mean():.2f} - {p2_scores.mean():.2f}')
-        print(f'Match score: {np.sum(p1_scores > p2_scores)} - {np.sum(p1_scores == p2_scores)} - {np.sum(p1_scores < p2_scores)}')
-        print(f'Finished in {int(time.time() - start_time)} seconds')
+    
+    agent_paths_broadcasted = []
+    for i in range(args.n_games):
+        agent_paths_broadcasted.append((args.agent1_path, args.agent2_path))
+    
+    if args.n_workers == 1:
+        results = map(get_game_result, agent_paths_broadcasted)
+    else:        
+        with multiprocessing.Pool(processes=args.n_workers) as pool:
+            results = pool.map(get_game_result, agent_paths_broadcasted)
+    
+    p1_scores = []
+    p2_scores = []
+    for i, result in enumerate(results):
+        p1_scores.append(result[0])
+        p2_scores.append(result[1])
+        print(f'Round {i+1}: {p1_scores[-1]} - {p2_scores[-1]}')
+    p1_scores = np.array(p1_scores)
+    p2_scores = np.array(p2_scores)
+    print(f'Mean scores: {p1_scores.mean():.2f} - {p2_scores.mean():.2f}')
+    print(f'Match score: {np.sum(p1_scores > p2_scores)} - {np.sum(p1_scores == p2_scores)} - {np.sum(p1_scores < p2_scores)}')
+    print(f'Finished in {int(time.time() - start_time)} seconds')
