@@ -45,6 +45,7 @@ class KaggleMABEnvTorchVectorized():
         self.env_device = env_device
         self.out_device = out_device
         
+        self.obs_norm = self.n_bandits / self.n_steps
         self.timestep = None
         self.orig_thresholds = None
         self.player_n_pulls = None
@@ -141,7 +142,7 @@ class KaggleMABEnvTorchVectorized():
             ], dim=-1)
         else:
             raise RuntimeError('n_players > 2 is not currently supported by obs() due to relative player pulls info')
-        return obs * self.n_bandits / self.n_steps
+        return obs * self.obs_norm
     
     @property
     def thresholds(self):
