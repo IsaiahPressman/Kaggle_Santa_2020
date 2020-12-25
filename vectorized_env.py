@@ -113,7 +113,7 @@ class KaggleMABEnvTorchVectorized():
         if self.reward_type == EVERY_STEP_TRUE:
             rewards = pull_rewards
         elif self.reward_type == EVERY_STEP_EV:
-            rewards = selected_thresholds
+            rewards = selected_thresholds / self.sample_resolution
         elif self.reward_type == END_OF_GAME_TRUE:
             rewards = torch.zeros_like(actions).float()
             if self.timestep == self.n_steps:

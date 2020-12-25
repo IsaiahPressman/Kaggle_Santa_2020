@@ -101,6 +101,15 @@ class SavedRLAgent():
                 skip_connection_n=1
             )
             ss_filename = 'rl_agents/ss_a3c_agent_v2.txt'
+        elif agent_name == 'a3c_agent_v3':
+            self.model = GraphNN_A3C(
+                in_features=3,
+                n_nodes=100,
+                n_hidden_layers=4,
+                layer_sizes=16,
+                skip_connection_n=1
+            )
+            ss_filename = 'rl_agents/ss_a3c_agent_v3.txt'
         else:
             raise ValueError(f'Unrecognized agent_name: {agent_name}')
         with open(ss_filename, 'r') as f:
