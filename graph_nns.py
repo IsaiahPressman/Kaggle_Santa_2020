@@ -3,6 +3,32 @@ from torch import distributions, nn
 import torch.nn.functional as F
 
 
+class SmallFullyConnectedGNNLayer(nn.Module):
+    def __init__(self, n_nodes, in_features, out_features, activation_func=nn.ReLU(), squeeze_out=False):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.activation_func = activation_func
+        self.message_passing_mat = nn.Parameter(
+            (torch.ones((n_nodes, n_nodes)) - torch.eye(n_nodes)) / (n_nodes - 1),
+            requires_grad=False
+        )
+        self.recombine_features = nn.Linear(in_features * 2, out_features)
+        self.squeeze_out = squeeze_out
+        # Initialize linear layer weights
+        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.2)
+        nn.init.constant_(self.recombine_features.bias, 0.)
+
+    def forward(self, features):
+        messages = torch.matmul(self.message_passing_mat, features)
+        features_messages_combined = self.activation_func(
+            self.recombine_features(torch.cat([features, messages], dim=-1))
+        )
+        if self.squeeze_out:
+            return features_messages_combined.squeeze(dim=-1)
+        else:
+            return features_messages_combined
+
+
 class FullyConnectedGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features, activation_func=nn.ReLU(), squeeze_out=False):
         super().__init__()
@@ -35,7 +61,7 @@ class FullyConnectedGNNLayer(nn.Module):
             return features_messages_combined
         
 
-class GraphNN_Residual_Base(nn.Module):
+class GraphNNResidualBase(nn.Module):
     def __init__(self, layers, skip_connection_n):
         super().__init__()
         assert skip_connection_n >= 1
@@ -55,25 +81,30 @@ class GraphNN_Residual_Base(nn.Module):
         return x
         
         
-class GraphNN_A3C(nn.Module):
-    def __init__(self, in_features, n_nodes, n_hidden_layers, layer_sizes,
-                 activation_func = nn.ReLU(), skip_connection_n=2):
+class GraphNNA3C(nn.Module):
+    def __init__(self, in_features, n_nodes, n_hidden_layers, layer_sizes, layer_class,
+                 activation_func=nn.ReLU(), skip_connection_n=1):
         super().__init__()
         
         # Define network
         if type(layer_sizes) == int:
             layer_sizes = [layer_sizes] * (n_hidden_layers + 1)
-        assert len(layer_sizes) == n_hidden_layers + 1, f'len(layer_sizes) must equal n_hidden_layers + 1, was {len(layer_sizes)} but should have been {n_hidden_layers+1}'
-        layers = [FullyConnectedGNNLayer(n_nodes, in_features, layer_sizes[0], activation_func=activation_func)]
+        if len(layer_sizes) != n_hidden_layers + 1:
+            raise ValueError(f'len(layer_sizes) must equal n_hidden_layers + 1, '
+                             f'was {len(layer_sizes)} but should have been {n_hidden_layers+1}')
+        layers = [layer_class(n_nodes, in_features, layer_sizes[0], activation_func=activation_func)]
         for i in range(n_hidden_layers):
-            layers.append(FullyConnectedGNNLayer(n_nodes, layer_sizes[i], layer_sizes[i+1], activation_func=activation_func))
+            layers.append(layer_class(n_nodes, layer_sizes[i], layer_sizes[i+1],
+                                      activation_func=activation_func))
         
         if skip_connection_n == 0:
             self.base = nn.Sequential(*layers)
         else:
-            self.base = GraphNN_Residual_Base(layers, skip_connection_n)
-        self.actor = FullyConnectedGNNLayer(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
-        self.critic = FullyConnectedGNNLayer(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
+            self.base = GraphNNResidualBase(layers, skip_connection_n)
+        self.actor = layer_class(n_nodes, layer_sizes[-1], 1,
+                                            activation_func=nn.Identity(), squeeze_out=True)
+        self.critic = layer_class(n_nodes, layer_sizes[-1], 1,
+                                             activation_func=nn.Identity(), squeeze_out=True)
     
     def forward(self, states):
         base_out = self.base(states)

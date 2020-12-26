@@ -5,7 +5,7 @@ import torch
 from torch import distributions
 import tqdm
 
-from graph_nns import GraphNN_A3C
+from graph_nns import GraphNNA3C, FullyConnectedGNNLayer, SmallFullyConnectedGNNLayer
 from vectorized_env import KaggleMABEnvTorchVectorized
 
 
@@ -18,7 +18,9 @@ def run_vectorized_vs(p1, p2, p1_name, p2_name, *env_args, **env_kwargs):
     p1_scores, p2_scores = vs_env.player_rewards_sums.sum(-1).chunk(2, dim=1)
     print(f'{p1_name} -vs- {p2_name}')
     print(f'Mean scores: {p1_scores.mean():.2f} - {p2_scores.mean():.2f}')
-    print(f'Match score: {torch.sum(p1_scores > p2_scores)} - {torch.sum(p1_scores == p2_scores)} - {torch.sum(p1_scores < p2_scores)}')
+    print(f'Match score: {torch.sum(p1_scores > p2_scores)} - '
+          f'{torch.sum(p1_scores == p2_scores)} - '
+          f'{torch.sum(p1_scores < p2_scores)}')
     time.sleep(0.5)
 
 
@@ -57,8 +59,15 @@ class MultiAgent():
         self.name = 'MultiAgent'
     
     def __call__(self, states):
-        states_chunked = states.chunk(len(self.agents), dim=self.envs_dim)
-        return torch.cat([a(s) for a, s in zip(self.agents, states_chunked)], dim=self.envs_dim)
+        global states_chunked, agents
+        try:
+            states_chunked = states.chunk(len(self.agents), dim=self.envs_dim)
+            return torch.cat([a(s) for a, s in zip(self.agents, states_chunked)], dim=self.envs_dim)
+        except TypeError as te:
+            states_chunked = states.chunk(len(self.agents), dim=self.envs_dim)
+            agents = self.agents
+            print(states_chunked)
+            raise te
 
 
 class PullVegasSlotMachines():
@@ -97,38 +106,42 @@ class SavedRLAgent():
     def __init__(self, agent_name, device=torch.device('cuda'), deterministic_policy=False):
         self.name = f'SavedRLAgent: {agent_name}'
         if agent_name == 'a3c_agent_v0':
-            self.model = GraphNN_A3C(
+            self.model = GraphNNA3C(
                 in_features=3,
                 n_nodes=100,
                 n_hidden_layers=1,
                 layer_sizes=16,
+                layer_class=FullyConnectedGNNLayer,
                 skip_connection_n=0
             )
             ss_filename = 'rl_agents/ss_a3c_agent_v0.txt'
         elif agent_name == 'a3c_agent_v1':
-            self.model = GraphNN_A3C(
+            self.model = GraphNNA3C(
                 in_features=3,
                 n_nodes=100,
                 n_hidden_layers=3,
                 layer_sizes=16,
+                layer_class=FullyConnectedGNNLayer,
                 skip_connection_n=0
             )
             ss_filename = 'rl_agents/ss_a3c_agent_v1.txt'
         elif agent_name == 'a3c_agent_v2':
-            self.model = GraphNN_A3C(
+            self.model = GraphNNA3C(
                 in_features=3,
                 n_nodes=100,
                 n_hidden_layers=4,
                 layer_sizes=16,
+                layer_class=FullyConnectedGNNLayer,
                 skip_connection_n=1
             )
             ss_filename = 'rl_agents/ss_a3c_agent_v2.txt'
         elif agent_name == 'a3c_agent_v3':
-            self.model = GraphNN_A3C(
+            self.model = GraphNNA3C(
                 in_features=3,
                 n_nodes=100,
                 n_hidden_layers=4,
                 layer_sizes=16,
+                layer_class=FullyConnectedGNNLayer,
                 skip_connection_n=1
             )
             ss_filename = 'rl_agents/ss_a3c_agent_v3.txt'
