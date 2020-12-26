@@ -50,24 +50,21 @@ class BasicThompsonSampling():
 
     
 class MultiAgent():
-    def __init__(self, agents, envs_dim=1):
+    def __init__(self, agents, envs_dim=0):
         self.agents = agents
         # Splits batch observations among agents along envs_dim
-        # envs_dim = 1 assumes that the observations are of the shape:
-        # batch_size, n_envs, n_players, n_bandits, features
+        # envs_dim = 0 assumes that the observations are of the shape:
+        # n_envs, n_players, n_bandits, features
         self.envs_dim = envs_dim
         self.name = 'MultiAgent'
     
     def __call__(self, states):
-        global states_chunked, agents
-        try:
-            states_chunked = states.chunk(len(self.agents), dim=self.envs_dim)
+        states_chunked = states.chunk(len(self.agents), dim=self.envs_dim)
+        if len(states_chunked) != len(self.agents):
+            raise ValueError(f'There were only {states.shape[self.envs_dim]} envs for {len(self.agents)} agents, '
+                             f'from states tensor of shape {states.shape}')
+        else:
             return torch.cat([a(s) for a, s in zip(self.agents, states_chunked)], dim=self.envs_dim)
-        except TypeError as te:
-            states_chunked = states.chunk(len(self.agents), dim=self.envs_dim)
-            agents = self.agents
-            print(states_chunked)
-            raise te
 
 
 class PullVegasSlotMachines():
