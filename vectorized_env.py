@@ -38,7 +38,7 @@ class KaggleMABEnvTorchVectorized():
         self.n_players = n_players
         self.opponent = opponent
         if self.opponent is not None:
-            assert n_players == 2
+            assert self.n_players == 2
         self.reward_type = reward_type
         if not normalize_reward or self.reward_type in (END_OF_GAME_TRUE,):
             self.r_norm = 1.
@@ -120,6 +120,7 @@ class KaggleMABEnvTorchVectorized():
                 rewards_sums = self.player_rewards_sums.sum(dim=2)
                 winners = rewards_sums.argmax(dim=1)
                 rewards[winners] = 1.
+                assert False, 'Need to account for draws'
         
         rewards = rewards * self.r_norm
         # State, reward, done, info_dict

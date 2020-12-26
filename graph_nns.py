@@ -2,6 +2,7 @@ import torch
 from torch import distributions, nn
 import torch.nn.functional as F
 
+
 class FullyConnectedGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features, activation_func=nn.ReLU(), squeeze_out=False):
         super().__init__()
@@ -71,7 +72,7 @@ class GraphNN_A3C(nn.Module):
             self.base = nn.Sequential(*layers)
         else:
             self.base = GraphNN_Residual_Base(layers, skip_connection_n)
-        self.actor = FullyConnectedGNNLayer(n_nodes, layer_sizes[-1], 1, activation_func=activation_func, squeeze_out=True)
+        self.actor = FullyConnectedGNNLayer(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
         self.critic = FullyConnectedGNNLayer(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
     
     def forward(self, states):
