@@ -10,7 +10,7 @@ from vectorized_env import KaggleMABEnvTorchVectorized
 
 
 def run_vectorized_vs(p1, p2, p1_name, p2_name, *env_args, **env_kwargs):
-    assert 'opponent' not in env_kwargs.keys(), 'Pass opponent as p2 arg, not as opponent arg'
+    assert 'opponent' not in env_kwargs.keys(), 'Pass opponent as p2 arg, not as opponent kwarg'
     vs_env = KaggleMABEnvTorchVectorized(*env_args, opponent=p2, **env_kwargs)
     s, _, _, _ = vs_env.reset()
     for i in tqdm.trange(vs_env.n_steps):
@@ -20,7 +20,10 @@ def run_vectorized_vs(p1, p2, p1_name, p2_name, *env_args, **env_kwargs):
     print(f'Mean scores: {p1_scores.mean():.2f} - {p2_scores.mean():.2f}')
     print(f'Match score: {torch.sum(p1_scores > p2_scores)} - '
           f'{torch.sum(p1_scores == p2_scores)} - '
-          f'{torch.sum(p1_scores < p2_scores)}')
+          f'{torch.sum(p1_scores < p2_scores)} '
+          f'({torch.sum(p1_scores > p2_scores) * 100. / vs_env.n_envs:.1f}% - '
+          f'{torch.sum(p1_scores == p2_scores) * 100. / vs_env.n_envs:.1f}% - '
+          f'{torch.sum(p1_scores < p2_scores) * 100. / vs_env.n_envs:.1f}%)')
     time.sleep(0.5)
 
 
@@ -142,6 +145,16 @@ class SavedRLAgent():
                 skip_connection_n=1
             )
             ss_filename = 'rl_agents/ss_a3c_agent_v3.txt'
+        elif agent_name == 'a3c_agent_v4-162':
+            self.model = GraphNNA3C(
+                in_features=3,
+                n_nodes=100,
+                n_hidden_layers=4,
+                layer_sizes=16,
+                layer_class=FullyConnectedGNNLayer,
+                skip_connection_n=1
+            )
+            ss_filename = 'runs/v4/cp_162.txt'
         else:
             raise ValueError(f'Unrecognized agent_name: {agent_name}')
         with open(ss_filename, 'r') as f:

@@ -118,10 +118,11 @@ class KaggleMABEnvTorchVectorized():
             rewards = torch.zeros_like(actions).float()
             if self.timestep == self.n_steps:
                 rewards_sums = self.player_rewards_sums.sum(dim=2)
-                winners = rewards_sums.argmax(dim=1)
-                rewards[winners] = 1.
-                assert False, 'Need to account for draws'
-        
+                winners_idxs = rewards_sums.argmax(dim=1)
+                draws_mask = rewards_sums[:,0] == rewards_sums[:,1]
+                rewards[torch.arange(game_scores.shape[0]), winners_idxs] = 1.
+                rewards[draws_mask] = 0.5
+
         rewards = rewards * self.r_norm
         # State, reward, done, info_dict
         return self.obs, rewards, self.done, self.info_dict
