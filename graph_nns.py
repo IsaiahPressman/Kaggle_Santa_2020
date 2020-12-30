@@ -3,32 +3,6 @@ from torch import distributions, nn
 import torch.nn.functional as F
 
 
-class SmallFullyConnectedGNNLayer(nn.Module):
-    def __init__(self, n_nodes, in_features, out_features, activation_func=nn.ReLU(), squeeze_out=False):
-        super().__init__()
-        self.n_nodes = n_nodes
-        self.activation_func = activation_func
-        self.message_passing_mat = nn.Parameter(
-            (torch.ones((n_nodes, n_nodes)) - torch.eye(n_nodes)) / (n_nodes - 1),
-            requires_grad=False
-        )
-        self.recombine_features = nn.Linear(in_features * 2, out_features)
-        self.squeeze_out = squeeze_out
-        # Initialize linear layer weights
-        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.2)
-        nn.init.constant_(self.recombine_features.bias, 0.)
-
-    def forward(self, features):
-        messages = torch.matmul(self.message_passing_mat, features)
-        features_messages_combined = self.activation_func(
-            self.recombine_features(torch.cat([features, messages], dim=-1))
-        )
-        if self.squeeze_out:
-            return features_messages_combined.squeeze(dim=-1)
-        else:
-            return features_messages_combined
-
-
 class FullyConnectedGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features, activation_func=nn.ReLU(), squeeze_out=False):
         super().__init__()
@@ -59,7 +33,93 @@ class FullyConnectedGNNLayer(nn.Module):
             return features_messages_combined.squeeze(dim=-1)
         else:
             return features_messages_combined
-        
+
+    def reset_hidden_states(self):
+        pass
+
+
+class SmallFullyConnectedGNNLayer(nn.Module):
+    def __init__(self, n_nodes, in_features, out_features, activation_func=nn.ReLU(), squeeze_out=False):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.activation_func = activation_func
+        self.message_passing_mat = nn.Parameter(
+            (torch.ones((n_nodes, n_nodes)) - torch.eye(n_nodes)) / (n_nodes - 1),
+            requires_grad=False
+        )
+        self.recombine_features = nn.Linear(in_features * 2, out_features)
+        self.squeeze_out = squeeze_out
+        # Initialize linear layer weights
+        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.2)
+        nn.init.constant_(self.recombine_features.bias, 0.)
+
+    def forward(self, features):
+        messages = torch.matmul(self.message_passing_mat, features)
+        features_messages_combined = self.activation_func(
+            self.recombine_features(torch.cat([features, messages], dim=-1))
+        )
+        if self.squeeze_out:
+            return features_messages_combined.squeeze(dim=-1)
+        else:
+            return features_messages_combined
+
+    def reset_hidden_states(self):
+        pass
+
+
+class SmallRecurrentGNNLayer(nn.Module):
+    def __init__(self, n_nodes, in_features, out_features, recurrent_layer_class=nn.LSTM, squeeze_out=False, **kwargs):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.message_passing_mat = nn.Parameter(
+            (torch.ones((n_nodes, n_nodes)) - torch.eye(n_nodes)) / (n_nodes - 1),
+            requires_grad=False
+        )
+        self.recombine_features = recurrent_layer_class(in_features * 2, out_features)
+        self.rf_hidden = None
+        self.squeeze_out = squeeze_out
+        # Initialize LSTM layer weights
+        #nn.init.normal_(self.recombine_features.weight_ih_l0, mean=0., std=0.2)
+        #nn.init.normal_(self.recombine_features.weight_hh_l0, mean=0., std=0.2)
+        #nn.init.normal_(self.recombine_features.bias_ih_l0, mean=0., std=0.2)
+        #nn.init.normal_(self.recombine_features.bias_hh_l0, mean=0., std=0.2)
+
+    def forward(self, features):
+        orig_shape = features.shape
+        messages = torch.matmul(self.message_passing_mat, features)
+        """
+        if self.rf_hidden is None:
+            features_messages_combined, self.rf_hidden = self.recombine_features(
+                torch.cat([features, messages], dim=-1).view(orig_shape[0], -1, orig_shape[-1] * 2)
+            )
+        else:
+            features_messages_combined, self.rf_hidden = self.recombine_features(
+                torch.cat([features, messages], dim=-1).view(orig_shape[0], -1, orig_shape[-1] * 2),
+                self.rf_hidden
+            )"""
+        features_messages_combined, temp = self.recombine_features(
+            torch.cat([features, messages], dim=-1).view(orig_shape[0], -1, orig_shape[-1] * 2),
+            self.rf_hidden
+        )
+        self.rf_hidden = temp
+        features_messages_combined = features_messages_combined.view((*orig_shape[:-1], -1))
+        if self.squeeze_out:
+            return features_messages_combined.squeeze(dim=-1)
+        else:
+            return features_messages_combined
+
+    def reset_hidden_states(self):
+        self.rf_hidden = None
+
+    def detach_hidden_states(self):
+        self.rf_hidden = [h.detach() for h in self.rf_hidden]
+
+    def get_hidden_states(self):
+        return self.rf_hidden
+
+    def set_hidden_states(self, hidden_states):
+        self.rf_hidden = hidden_states
+
 
 class GraphNNResidualBase(nn.Module):
     def __init__(self, layers, skip_connection_n):
@@ -74,11 +134,23 @@ class GraphNNResidualBase(nn.Module):
             if (len(self.layers) - layer_num - 1) % self.skip_connection_n == 0:
                 x = layer(x)
                 if identity is not None:
-                    x += identity
+                    x = x + identity
                 identity = x
             else:
                 x = layer(x)
         return x
+
+    def reset_hidden_states(self):
+        [layer.reset_hidden_states() for layer in self.layers]
+
+    def detach_hidden_states(self):
+        [layer.detach_hidden_states() for layer in self.layers]
+
+    def get_hidden_states(self):
+        return [layer.get_hidden_states() for layer in self.layers]
+
+    def set_hidden_states(self, hidden_states):
+        [layer.set_hidden_states(hs) for layer, hs in zip(self.layers, hidden_states)]
         
         
 class GraphNNA3C(nn.Module):
@@ -101,42 +173,48 @@ class GraphNNA3C(nn.Module):
             self.base = nn.Sequential(*layers)
         else:
             self.base = GraphNNResidualBase(layers, skip_connection_n)
-        self.actor = layer_class(n_nodes, layer_sizes[-1], 1,
-                                            activation_func=nn.Identity(), squeeze_out=True)
-        self.critic = layer_class(n_nodes, layer_sizes[-1], 1,
-                                             activation_func=nn.Identity(), squeeze_out=True)
+        self.actor = layer_class(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
+        self.critic = layer_class(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
     
     def forward(self, states):
         base_out = self.base(states)
         return self.actor(base_out), self.critic(base_out).mean(dim=-1)
     
-    def sample_action(self, states):
-        with torch.no_grad():
-            logits, _ = self.forward(states)
-            probs = F.softmax(logits, dim=-1)
-            batch_size, n_envs, n_players, n_bandits = probs.shape
-            m = distributions.Categorical(probs.view(batch_size * n_envs * n_players, n_bandits))
-            return m.sample().view(batch_size, n_envs, n_players)
+    def sample_action(self, states, train=False):
+        if train:
+            logits, values = self.forward(states)
+        else:
+            with torch.no_grad():
+                logits, values = self.forward(states)
+        probs = F.softmax(logits, dim=-1)
+        seq_len, n_envs, n_players, n_bandits = probs.shape
+        m = distributions.Categorical(probs.view(seq_len * n_envs * n_players, n_bandits))
+        sampled_actions = m.sample().view(seq_len, n_envs, n_players)
+        if train:
+            return sampled_actions, (logits, values)
+        else:
+            return sampled_actions
     
     def choose_best_action(self, states):
         with torch.no_grad():
             logits, _ = self.forward(states)
             return logits.argmax(dim=-1)
-    
-    def loss_func(self, states, actions, v_t):
-        #print(f'states.shape: {states.shape}, actions.shape: {actions.shape}, v_t.shape: {v_t.shape}')
-        logits, values = self.forward(states)
-        
-        #print(f'logits.shape: {logits.shape}, values.shape: {values.shape}')
-        td = v_t - values
-        #critic_loss = td.pow(2).view(-1)
-        # Huber loss
-        critic_loss = F.smooth_l1_loss(v_t, values, reduction='none').view(-1)
-        
-        probs = F.softmax(logits, dim=-1)
-        batch_size, n_envs, n_players, n_bandits = probs.shape
-        m = distributions.Categorical(probs.view(batch_size * n_envs * n_players, n_bandits))
-        #print(f'm.log_prob(actions.view(batch_size * n_envs * n_players)).shape: {m.log_prob(actions.view(batch_size * n_envs * n_players)).shape}, td.shape: {td.shape}')
-        actor_loss = -(m.log_prob(actions.view(-1)) * td.detach().view(-1))
-        total_loss = (critic_loss + actor_loss).mean()
-        return total_loss
+
+    def reset_hidden_states(self):
+        self.base.reset_hidden_states()
+        self.actor.reset_hidden_states()
+        self.critic.reset_hidden_states()
+
+    def detach_hidden_states(self):
+        self.base.detach_hidden_states()
+        self.actor.detach_hidden_states()
+        self.critic.detach_hidden_states()
+
+    def get_hidden_states(self):
+        return self.base.get_hidden_states(), self.actor.get_hidden_states(), self.critic.get_hidden_states()
+
+    def set_hidden_states(self, hidden_states):
+        base_hs, actor_hs, critic_hs = hidden_states
+        self.base.set_hidden_states(base_hs)
+        self.actor.set_hidden_states(actor_hs)
+        self.critic.set_hidden_states(critic_hs)
