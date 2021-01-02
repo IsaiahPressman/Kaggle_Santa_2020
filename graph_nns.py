@@ -97,11 +97,10 @@ class SmallRecurrentGNNLayer(nn.Module):
                 torch.cat([features, messages], dim=-1).view(orig_shape[0], -1, orig_shape[-1] * 2),
                 self.rf_hidden
             )"""
-        features_messages_combined, temp = self.recombine_features(
+        features_messages_combined, self.rf_hidden = self.recombine_features(
             torch.cat([features, messages], dim=-1).view(orig_shape[0], -1, orig_shape[-1] * 2),
             self.rf_hidden
         )
-        self.rf_hidden = temp
         features_messages_combined = features_messages_combined.view((*orig_shape[:-1], -1))
         if self.squeeze_out:
             return features_messages_combined.squeeze(dim=-1)
