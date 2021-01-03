@@ -10,13 +10,24 @@ import graph_nns as gnn
 import vectorized_env as ve
 
 
-def run_vectorized_vs(p1, p2, p1_name, p2_name, *env_args, **env_kwargs):
+def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, *env_args, **env_kwargs):
     env_kwargs = copy(env_kwargs)
     assert 'opponent' not in env_kwargs.keys(), 'Pass opponent as p2 arg, not as opponent kwarg'
     if 'obs_type' not in env_kwargs.keys():
         env_kwargs['obs_type'] = p1.obs_type
     if 'opponent_obs_type' not in env_kwargs.keys():
         env_kwargs['opponent_obs_type'] = p2.obs_type
+    if p1_name is None:
+        try:
+            p1_name = p1.name
+        except AttributeError:
+            pass
+    if p2_name is None:
+        try:
+            p2_name = p2.name
+        except AttributeError:
+            pass
+
     vs_env = ve.KaggleMABEnvTorchVectorized(*env_args, opponent=p2, **env_kwargs)
     s, _, _, _ = vs_env.reset()
     for i in tqdm.trange(vs_env.n_steps):
@@ -186,6 +197,17 @@ class SavedRLAgent(VectorizedAgent):
             )
             ss_filename = 'runs/v4/cp_162.txt'
             self.obs_type = ve.SUMMED_OBS
+        elif agent_name == 'a3c_agent_small_8_32-790':
+            self.model = gnn.GraphNNA3C(
+                in_features=3,
+                n_nodes=100,
+                n_hidden_layers=8,
+                layer_sizes=32,
+                layer_class=gnn.SmallFullyConnectedGNNLayer,
+                skip_connection_n=1
+            )
+            ss_filename = 'runs/small_8_32/790_cp.txt'
+            self.obs_type = ve.SUMMED_OBS
         else:
             raise ValueError(f'Unrecognized agent_name: {agent_name}')
         with open(ss_filename, 'r') as f:
@@ -203,10 +225,13 @@ class SavedRLAgent(VectorizedAgent):
 
 
 class RLModelWrapperAgent(VectorizedAgent):
-    def __init__(self, model, obs_type, deterministic_policy=False):
+    def __init__(self, model, obs_type, name=None, deterministic_policy=False):
         super().__init__()
         self.model = model
-        self.name = f'Wrapped RL model: {self.model}'
+        if name is None:
+            self.name = f'Wrapped RL model'
+        else:
+            self.name = f'Wrapped RL model: {name}'
         self.obs_type = obs_type
         if deterministic_policy:
             self.act_func = self.model.choose_best_action

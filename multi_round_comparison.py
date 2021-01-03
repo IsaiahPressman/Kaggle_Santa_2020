@@ -2,6 +2,7 @@ import argparse
 import contextlib
 import io
 import multiprocessing
+import os
 import numpy as np
 from pathlib import Path
 import time
@@ -10,6 +11,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     # Silence gfootball import error
     from kaggle_environments import make
 
+os.environ['OMP_NUM_THREADS'] = '1'
 
 def get_game_result(agents):
     env = make('mab', debug=True)

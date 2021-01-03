@@ -24,7 +24,7 @@ import vectorized_agents as va
 DEVICE = torch.device('cuda')
 OBS_NORM = 100. / 1999.
 
-use_rnn = True
+use_rnn = False
 def custom_layer_class_factory(*args, **kwargs):
     def recurrent_layer_class_factory(*args, **kwargs):
         return nn.LSTM(*args, num_layers=2, **kwargs)
@@ -33,22 +33,21 @@ def custom_layer_class_factory(*args, **kwargs):
 graph_nn_kwargs = dict(
     in_features=3,
     n_nodes=100,
-    n_hidden_layers=3,
-    layer_sizes=24,
-    #layer_class=gnn.SmallRecurrentGNNLayer if use_rnn else gnn.SmallFullyConnectedGNNLayer,
-    layer_class=custom_layer_class_factory,
+    n_hidden_layers=16,
+    layer_sizes=32,
+    layer_class=gnn.SmallRecurrentGNNLayer if use_rnn else gnn.SmallFullyConnectedGNNLayer,
+    #layer_class=custom_layer_class_factory,
     skip_connection_n=1
 )
 model = gnn.GraphNNA3C(**graph_nn_kwargs)
 model.to(device=DEVICE)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+optimizer = torch.optim.Adam(model.parameters())
 
 env_kwargs = dict(
-    n_envs=512,
     env_device=DEVICE,
     out_device=DEVICE,
     normalize_reward=False,
-    reward_type=ve.EVERY_STEP_EV,
+    reward_type=ve.EVERY_STEP_EV_ZEROSUM,
     obs_type=ve.LAST_STEP_OBS if use_rnn else ve.SUMMED_OBS,
     opponent_obs_type=ve.SUMMED_OBS
 )
@@ -63,23 +62,25 @@ def model_constructor():
 # initial_opponent_pool = []
 initial_opponent_pool = [
     #va.BasicThompsonSampling(OBS_NORM),
-    #va.PullVegasSlotMachines(OBS_NORM),
+    va.PullVegasSlotMachines(OBS_NORM),
     #va.SavedRLAgent('a3c_agent_v0', device=DEVICE),
-    #va.SavedRLAgent('a3c_agent_v1', device=DEVICE),
-    #va.SavedRLAgent('a3c_agent_v2', device=DEVICE),
+    va.SavedRLAgent('a3c_agent_v1', device=DEVICE),
+    va.SavedRLAgent('a3c_agent_v2', device=DEVICE),
     va.SavedRLAgent('a3c_agent_v3', device=DEVICE),
+    va.SavedRLAgent('a3c_agent_v4-162', device=DEVICE),
+    va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE),
 ]
 
+folder_name = f"small_{graph_nn_kwargs['n_hidden_layers']}_{graph_nn_kwargs['layer_sizes']}"
 a3c_alg = A3CVectorized(model_constructor, optimizer, model=model, device=DEVICE,
-                        exp_folder=Path('runs/LSTM_3_2_layer_v2'),
+                        exp_folder=Path(f'runs/{folder_name}'),
                         recurrent_model=use_rnn,
                         clip_grads=10.,
-                        play_against_past_selves=False,
+                        play_against_past_selves=True,
                         n_past_selves=4,
                         checkpoint_freq=10,
                         initial_opponent_pool=initial_opponent_pool,
                         opp_posterior_decay=0.95)
 
-env_kwargs['n_envs'] = 400
-env_kwargs['opponent'] = va.SavedRLAgent('a3c_agent_v0', device=DEVICE)
+env_kwargs['n_envs'] = 200
 a3c_alg.train(n_episodes=1000, **rl_alg_kwargs, **env_kwargs)

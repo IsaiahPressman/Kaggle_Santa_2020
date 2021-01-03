@@ -16,8 +16,8 @@ class FullyConnectedGNNLayer(nn.Module):
         self.recombine_features = nn.Linear(out_features*2, out_features)
         self.squeeze_out = squeeze_out
         # Initialize linear layer weights
-        nn.init.normal_(self.transform_features.weight, mean=0., std=0.2)
-        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.2)
+        nn.init.normal_(self.transform_features.weight, mean=0., std=0.3)
+        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.3)
         nn.init.constant_(self.transform_features.bias, 0.)
         nn.init.constant_(self.recombine_features.bias, 0.)
     
@@ -113,12 +113,6 @@ class SmallRecurrentGNNLayer(nn.Module):
     def detach_hidden_states(self):
         self.rf_hidden = [h.detach() for h in self.rf_hidden]
 
-    def get_hidden_states(self):
-        return self.rf_hidden
-
-    def set_hidden_states(self, hidden_states):
-        self.rf_hidden = hidden_states
-
 
 class GraphNNResidualBase(nn.Module):
     def __init__(self, layers, skip_connection_n):
@@ -144,12 +138,6 @@ class GraphNNResidualBase(nn.Module):
 
     def detach_hidden_states(self):
         [layer.detach_hidden_states() for layer in self.layers]
-
-    def get_hidden_states(self):
-        return [layer.get_hidden_states() for layer in self.layers]
-
-    def set_hidden_states(self, hidden_states):
-        [layer.set_hidden_states(hs) for layer, hs in zip(self.layers, hidden_states)]
         
         
 class GraphNNA3C(nn.Module):
@@ -208,12 +196,3 @@ class GraphNNA3C(nn.Module):
         self.base.detach_hidden_states()
         self.actor.detach_hidden_states()
         self.critic.detach_hidden_states()
-
-    def get_hidden_states(self):
-        return self.base.get_hidden_states(), self.actor.get_hidden_states(), self.critic.get_hidden_states()
-
-    def set_hidden_states(self, hidden_states):
-        base_hs, actor_hs, critic_hs = hidden_states
-        self.base.set_hidden_states(base_hs)
-        self.actor.set_hidden_states(actor_hs)
-        self.critic.set_hidden_states(critic_hs)

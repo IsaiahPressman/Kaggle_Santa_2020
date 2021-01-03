@@ -15,7 +15,7 @@ import vectorized_env as ve
 import vectorized_agents as va
 
 
-class A3CVectorized:
+class AWACVectorized:
     def __init__(self, model_constructor, optimizer, model=None, device=torch.device('cuda'),
                  exp_folder=Path('runs/TEMP'),
                  recurrent_model=False, clip_grads=10.,
@@ -160,8 +160,7 @@ class A3CVectorized:
             opponents = []
             opponent_idxs = []
             for i in range(self.n_past_selves):
-                # Sample opponents randomly if the agent is winning <= some fraction of it's games,
-                # otherwise use thompson sampling
+                # Sample opponents randomly if the agent is losing > some fraction of it's games, otherwise use thompson sampling
                 if np.sum(self.opp_b - 1) <= np.sum(self.opp_a - 1) / 5.:
                     if i == 0:
                         print('Sampling opponents randomly')
