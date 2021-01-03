@@ -8,7 +8,7 @@ END_OF_GAME_TRUE = 2
 
 SUMMED_OBS = 0
 LAST_STEP_OBS = 1
-#ONEHOT_OBS = 2
+ONEHOT_OBS = 2
 
 
 # A vectorized and GPU-compatible recreation of the kaggle "MAB" environment
@@ -103,6 +103,8 @@ class KaggleMABEnvTorchVectorized:
         self.player_rewards_sums = torch.zeros_like(self.player_n_pulls)
         self.last_pulls = torch.zeros_like(self.player_n_pulls)
         self.last_rewards = torch.zeros_like(self.player_n_pulls)
+        #self.pulls_onehot = torch.zeros((self.n_envs, self.n_players, self.n_bandits, self.n_steps), device=self.env_device)
+        #self.rewards_onehot = torch.zeros_like(self.pulls_onehot)
         
         rewards = torch.zeros((self.n_envs, self.n_players), device=self.env_device) * self.r_norm
         return self.obs, rewards, self.done, self.info_dict
