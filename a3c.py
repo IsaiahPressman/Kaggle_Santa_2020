@@ -133,8 +133,8 @@ class A3CVectorized:
                     total_loss.backward()
                     self.optimizer.step()
                     buffer_a, buffer_r, buffer_l, buffer_v = [], [], [], []
-                    actor_losses.append(actor_loss.detach().clone().cpu())
-                    critic_losses.append(critic_loss.detach().clone().cpu())
+                    actor_losses.append(actor_loss.detach().mean().clone().cpu())
+                    critic_losses.append(critic_loss.detach().mean().clone().cpu())
                 episode_reward_sums += r
                 step_count += 1
             if self.play_against_past_selves:
@@ -146,8 +146,8 @@ class A3CVectorized:
                 self.save()
             self.log(
                 episode_reward_sums.mean().clone().cpu() / self.env.r_norm,
-                torch.cat(actor_losses),
-                torch.cat(critic_losses)
+                torch.stack(actor_losses),
+                torch.stack(critic_losses)
             )
             self.true_ep_num += 1
         self.save(finished=True)
@@ -250,9 +250,10 @@ class A3CVectorized:
         self.summary_writer.add_scalar('episode/actor_loss', actor_losses.mean().numpy().item(), self.true_ep_num)
         self.summary_writer.add_scalar('episode/critic_loss', critic_losses.mean().numpy().item(), self.true_ep_num)
         assert len(actor_losses) == len(critic_losses)
-        for a_l, c_l in zip(actor_losses.numpy(), critic_losses.numpy()):
-            self.summary_writer.add_scalar('batch/actor_loss', a_l.item())
-            self.summary_writer.add_scalar('batch/critic_loss', c_l.item())
+        for i, (a_l, c_l) in enumerate(zip(actor_losses.numpy(), critic_losses.numpy())):
+            batch_num = self.true_ep_num * len(actor_losses) + i
+            self.summary_writer.add_scalar('batch/actor_loss', a_l.item(), batch_num)
+            self.summary_writer.add_scalar('batch/critic_loss', c_l.item(), batch_num)
         if self.true_ep_num % self.checkpoint_freq == 0:
             for name, param in self.model.named_parameters():
                 if param.requires_grad:
