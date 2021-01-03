@@ -1,14 +1,15 @@
 from functools import wraps
 import torch
 
-EVERY_STEP_TRUE = 0
-EVERY_STEP_EV = 1
-END_OF_GAME_TRUE = 2
+EVERY_STEP_TRUE = 'every_step_true'
+EVERY_STEP_EV = 'every_step_ev'
+EVERY_STEP_EV_ZEROSUM = 'every_step_ev_zerosum'
+END_OF_GAME_TRUE = 'end_of_game_true'
 #END_OF_GAME_EV = 3
 
-SUMMED_OBS = 0
-LAST_STEP_OBS = 1
-ONEHOT_OBS = 2
+SUMMED_OBS = 'summed_obs'
+LAST_STEP_OBS = 'last_step_obs'
+#ONEHOT_OBS = 2
 
 
 # A vectorized and GPU-compatible recreation of the kaggle "MAB" environment
@@ -30,8 +31,8 @@ class KaggleMABEnvTorchVectorized:
     ):
         # Assert parameter conditions
         assert 0 <= decay_rate <= 1.
-        assert reward_type in (EVERY_STEP_TRUE, EVERY_STEP_EV, END_OF_GAME_TRUE)
-        if reward_type in (END_OF_GAME_TRUE,):
+        assert reward_type in (EVERY_STEP_TRUE, EVERY_STEP_EV, EVERY_STEP_EV_ZEROSUM, END_OF_GAME_TRUE)
+        if reward_type in (END_OF_GAME_TRUE, EVERY_STEP_EV_ZEROSUM):
             assert n_players >= 2
         else:
             assert n_players >= 1
@@ -43,8 +44,10 @@ class KaggleMABEnvTorchVectorized:
         self.n_envs = n_envs
         self.n_players = n_players
         if n_players > 2:
-            raise ValueError('n_players > 2 is not currently supported by obs() due to relative player pulls info')
+            raise ValueError('n_players > 2 is not currently supported')
         self.reward_type = reward_type
+        if self.reward_type == EVERY_STEP_EV_ZEROSUM:
+            assert self.n_players == 2
         self.obs_type = obs_type
         self.opponent = opponent
         if self.opponent is not None:
@@ -103,8 +106,9 @@ class KaggleMABEnvTorchVectorized:
         self.player_rewards_sums = torch.zeros_like(self.player_n_pulls)
         self.last_pulls = torch.zeros_like(self.player_n_pulls)
         self.last_rewards = torch.zeros_like(self.player_n_pulls)
-        #self.pulls_onehot = torch.zeros((self.n_envs, self.n_players, self.n_bandits, self.n_steps), device=self.env_device)
-        #self.rewards_onehot = torch.zeros_like(self.pulls_onehot)
+        # self.pulls_onehot = torch.zeros((self.n_envs, self.n_players, self.n_bandits, self.n_steps),
+        #                                 device=self.env_device)
+        # self.rewards_onehot = torch.zeros_like(self.pulls_onehot)
         
         rewards = torch.zeros((self.n_envs, self.n_players), device=self.env_device) * self.r_norm
         return self.obs, rewards, self.done, self.info_dict
@@ -163,6 +167,12 @@ class KaggleMABEnvTorchVectorized:
             rewards = pull_rewards
         elif self.reward_type == EVERY_STEP_EV:
             rewards = selected_thresholds / self.sample_resolution
+        elif self.reward_type == EVERY_STEP_EV_ZEROSUM:
+            rewards_ev = selected_thresholds / self.sample_resolution
+            rewards = torch.stack([
+                rewards_ev[:, 0] - rewards_ev[:, 1],
+                rewards_ev[:, 1] - rewards_ev[:, 0]
+            ], dim=1)
         elif self.reward_type == END_OF_GAME_TRUE:
             rewards = torch.zeros_like(actions).float()
             if self.timestep == self.n_steps:
@@ -203,7 +213,7 @@ class KaggleMABEnvTorchVectorized:
                 player_n_pulls_player_relative,
                 self.player_rewards_sums.unsqueeze(-1)
             ], dim=-1)
-        return obs * self.obs_norm
+        return obs.detach() * self.obs_norm
 
     def get_last_step_obs(self):
         # Return an observation with only information about the last timestep, useful for RNNs
@@ -223,7 +233,7 @@ class KaggleMABEnvTorchVectorized:
                 last_pulls_relative,
                 self.last_rewards.unsqueeze(-1)
             ], dim=-1)
-        return obs * self.obs_norm
+        return obs.detach() * self.obs_norm
 
     @property
     def thresholds(self):
