@@ -52,7 +52,7 @@ class A3CVectorized:
         self.opp_b = np.ones(len(self.initial_opponent_pool))
         self.checkpoints = []
         self.true_ep_num = 0
-        self.summary_writer = SummaryWriter(self.exp_folder)
+        self.summary_writer = None
 
         if self.clip_grads is not None:
             if self.clip_grads <= 0:
@@ -146,8 +146,8 @@ class A3CVectorized:
                 self.save()
             self.log(
                 episode_reward_sums.mean().clone().cpu() / self.env.r_norm,
-                torch.cat(actor_losses).mean(),
-                torch.cat(critic_losses).mean()
+                torch.cat(actor_losses),
+                torch.cat(critic_losses)
             )
             self.true_ep_num += 1
         self.save(finished=True)
@@ -242,10 +242,17 @@ class A3CVectorized:
             })
             df.to_csv(f'{file_path_base}_skill_estimates.csv')
 
-    def log(self, episode_reward_sums, actor_loss, critic_loss):
-        self.summary_writer.add_scalar('mean_episode_reward', episode_reward_sums.numpy(), self.true_ep_num)
-        self.summary_writer.add_scalar('loss/actor', actor_loss.numpy(), self.true_ep_num)
-        self.summary_writer.add_scalar('loss/critic', critic_loss.numpy(), self.true_ep_num)
+    def log(self, episode_reward_sums, actor_losses, critic_losses):
+        # Lazily initialize summary_writer
+        if self.summary_writer is None:
+            self.summary_writer = SummaryWriter(self.exp_folder)
+        self.summary_writer.add_scalar('episode/reward', episode_reward_sums.numpy().item(), self.true_ep_num)
+        self.summary_writer.add_scalar('episode/actor_loss', actor_losses.mean().numpy().item(), self.true_ep_num)
+        self.summary_writer.add_scalar('episode/critic_loss', critic_losses.mean().numpy().item(), self.true_ep_num)
+        assert len(actor_losses) == len(critic_losses)
+        for a_l, c_l in zip(actor_losses.numpy(), critic_losses.numpy()):
+            self.summary_writer.add_scalar('batch/actor_loss', a_l.item())
+            self.summary_writer.add_scalar('batch/critic_loss', c_l.item())
         if self.true_ep_num % self.checkpoint_freq == 0:
             for name, param in self.model.named_parameters():
                 if param.requires_grad:
