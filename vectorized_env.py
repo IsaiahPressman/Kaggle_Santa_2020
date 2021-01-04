@@ -116,6 +116,7 @@ class KaggleMABEnvTorchVectorized:
     @_single_player_decorator
     @_out_device_decorator
     def step(self, actions):
+        actions = actions.to(self.env_device)
         if self.opponent is not None:
             if self.opponent_obs_type == SUMMED_OBS:
                 opp_obs = self.get_summed_obs()
@@ -247,6 +248,6 @@ class KaggleMABEnvTorchVectorized:
     def info_dict(self):
         info_dict = {
             'thresholds': self.thresholds,
-            'true_player_rewards_sums': self.player_rewards_sums,
+            'player_rewards_sums': self.player_rewards_sums,
         }
         return info_dict
