@@ -1,4 +1,5 @@
 import base64
+import copy
 from pathlib import Path
 import pickle
 import torch
@@ -20,7 +21,7 @@ graph_nn_kwargs = dict(
     layer_class=gnn.FullyConnectedGNNLayer,
     skip_connection_n=1
 )
-model = gnn.GraphNNA3C(**graph_nn_kwargs)
+model = gnn.GraphNNActorCritic(**graph_nn_kwargs)
 
 """
 with open(f'runs/small_16_32_v1/570_cp.txt', 'r') as f:
@@ -31,7 +32,7 @@ model.load_state_dict(loaded_state_dicts['model_state_dict'])
 """
 
 model.to(device=DEVICE)
-optimizer = torch.optim.SGD(model.parameters(), lr=3e-4)
+optimizer = torch.optim.Adam(model.parameters())
 
 env_kwargs = dict(
     env_device=DEVICE,
@@ -43,7 +44,8 @@ env_kwargs = dict(
 rl_alg_kwargs = dict(
     batch_size=1024,
     n_pretrain_batches=0,
-    train_batches_per_timestep=1,
+    n_steps_per_epoch=1999,
+    n_train_batches_per_epoch=None,
     gamma=0.99,
     lagrange_multiplier=1.
 )
@@ -52,20 +54,44 @@ replay_buffer = ReplayBuffer(
     max_len=1e6,
     starting_s_a_r_d_s=None,
 )
+validation_env_kwargs_base = dict(
+    n_envs=500,
+    env_device=DEVICE,
+    out_device=DEVICE,
+    obs_type=env_kwargs['obs_type']
+)
+validation_opponent_env_kwargs = [
+    dict(
+        opponent=va.BasicThompsonSampling(OBS_NORM),
+        opponent_obs_type=ve.SUMMED_OBS
+    ),
+    dict(
+        opponent=va.PullVegasSlotMachines(OBS_NORM),
+        opponent_obs_type=ve.SUMMED_OBS
+    ),
+    dict(
+        opponent=va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE, deterministic_policy=True),
+        opponent_obs_type=ve.SUMMED_OBS
+    ),
+]
+validation_env_kwargs_dicts = []
+for opponent_kwargs in validation_opponent_env_kwargs:
+    validation_env_kwargs_dicts.append(copy.copy(validation_env_kwargs_base))
+    validation_env_kwargs_dicts[-1].update(opponent_kwargs)
 
 
 folder_name = f"small_{graph_nn_kwargs['n_hidden_layers']}_{graph_nn_kwargs['layer_sizes']}"
 awac_alg = AWACVectorized(model, optimizer, replay_buffer,
+                          validation_env_kwargs_dicts=validation_env_kwargs_dicts,
                           device=DEVICE,
                           #exp_folder=Path(f'runs/awac/{folder_name}'),
                           clip_grads=10.,
-                          checkpoint_freq=10)
+                          checkpoint_freq=1)
 
-env_kwargs['n_envs'] = 512
-env_kwargs['opponent'] = va.BasicThompsonSampling(OBS_NORM)
+env_kwargs['n_envs'] = 256
 try:
-    awac_alg.train(n_steps=int(1e6), **rl_alg_kwargs, **env_kwargs)
+    awac_alg.train(ve.KaggleMABEnvTorchVectorized(**env_kwargs), n_epochs=1000, **rl_alg_kwargs)
 except KeyboardInterrupt:
-    if awac_alg.true_ep_num > awac_alg.checkpoint_freq:
+    if awac_alg.episode_counter > awac_alg.checkpoint_freq:
         print('KeyboardInterrupt: saving model')
         awac_alg.save(finished=True)

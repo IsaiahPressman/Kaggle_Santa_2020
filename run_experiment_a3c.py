@@ -28,7 +28,7 @@ graph_nn_kwargs = dict(
     #layer_class=custom_layer_class_factory,
     skip_connection_n=1
 )
-model = gnn.GraphNNA3C(**graph_nn_kwargs)
+model = gnn.GraphNNActorCritic(**graph_nn_kwargs)
 
 with open(f'runs/small_16_32_v1/570_cp.txt', 'r') as f:
     serialized_string = f.readline()[2:-1].encode()
@@ -53,7 +53,7 @@ rl_alg_kwargs = dict(
 )
 
 def model_constructor():
-    return gnn.GraphNNA3C(**graph_nn_kwargs)
+    return gnn.GraphNNActorCritic(**graph_nn_kwargs)
 
 rl_agent_opp_kwargs = dict(
     device=DEVICE,

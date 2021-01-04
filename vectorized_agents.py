@@ -143,7 +143,7 @@ class SavedRLAgent(VectorizedAgent):
         super().__init__()
         self.name = f'SavedRLAgent: {agent_name}'
         if agent_name == 'a3c_agent_v0':
-            self.model = gnn.GraphNNA3C(
+            self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
                 n_hidden_layers=1,
@@ -154,7 +154,7 @@ class SavedRLAgent(VectorizedAgent):
             ss_filename = 'rl_agents/ss_a3c_agent_v0.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'a3c_agent_v1':
-            self.model = gnn.GraphNNA3C(
+            self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
                 n_hidden_layers=3,
@@ -165,7 +165,7 @@ class SavedRLAgent(VectorizedAgent):
             ss_filename = 'rl_agents/ss_a3c_agent_v1.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'a3c_agent_v2':
-            self.model = gnn.GraphNNA3C(
+            self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
                 n_hidden_layers=4,
@@ -176,7 +176,7 @@ class SavedRLAgent(VectorizedAgent):
             ss_filename = 'rl_agents/ss_a3c_agent_v2.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'a3c_agent_v3':
-            self.model = gnn.GraphNNA3C(
+            self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
                 n_hidden_layers=4,
@@ -187,7 +187,7 @@ class SavedRLAgent(VectorizedAgent):
             ss_filename = 'rl_agents/ss_a3c_agent_v3.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'a3c_agent_v4-162':
-            self.model = gnn.GraphNNA3C(
+            self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
                 n_hidden_layers=4,
@@ -198,7 +198,7 @@ class SavedRLAgent(VectorizedAgent):
             ss_filename = 'runs/a3c/v4/cp_162.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'a3c_agent_small_8_32-790':
-            self.model = gnn.GraphNNA3C(
+            self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
                 n_hidden_layers=8,

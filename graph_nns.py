@@ -140,7 +140,7 @@ class GraphNNResidualBase(nn.Module):
         [layer.detach_hidden_states() for layer in self.layers]
         
         
-class GraphNNA3C(nn.Module):
+class GraphNNActorCritic(nn.Module):
     def __init__(self, in_features, n_nodes, n_hidden_layers, layer_sizes, layer_class,
                  activation_func=nn.ReLU(), skip_connection_n=1):
         super().__init__()
