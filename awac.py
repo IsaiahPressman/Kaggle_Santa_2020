@@ -226,4 +226,3 @@ class AWACVectorized:
         with open(f'{file_path_base}_cp.txt', 'w') as f:
             f.write(str(serialized_string))
         self.model.to(device=self.device)
-]
