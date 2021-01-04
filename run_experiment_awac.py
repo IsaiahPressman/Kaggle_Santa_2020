@@ -34,7 +34,6 @@ model.to(device=DEVICE)
 optimizer = torch.optim.SGD(model.parameters(), lr=3e-4)
 
 env_kwargs = dict(
-    #env_device=torch.device('cpu'),
     env_device=DEVICE,
     out_device=DEVICE,
     normalize_reward=False,
@@ -49,8 +48,9 @@ rl_alg_kwargs = dict(
     lagrange_multiplier=1.
 )
 replay_buffer = ReplayBuffer(
+    s_shape=(100, 3),
     max_len=1e6,
-    starting_s_a_r_s_d=None
+    starting_s_a_r_d_s=None,
 )
 
 
@@ -61,7 +61,7 @@ awac_alg = AWACVectorized(model, optimizer, replay_buffer,
                           clip_grads=10.,
                           checkpoint_freq=10)
 
-env_kwargs['n_envs'] = 64
+env_kwargs['n_envs'] = 512
 env_kwargs['opponent'] = va.BasicThompsonSampling(OBS_NORM)
 try:
     awac_alg.train(n_steps=int(1e6), **rl_alg_kwargs, **env_kwargs)

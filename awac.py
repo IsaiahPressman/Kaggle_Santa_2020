@@ -15,56 +15,62 @@ import tqdm
 import vectorized_env as ve
 
 
-class DEPRECATED_ReplayBuffer:
-    def __init__(self, max_len=1e6, starting_s_a_r_s_d=None):
+class ReplayBuffer:
+    def __init__(self, s_shape, max_len=1e6, starting_s_a_r_d_s=None):
         self.max_len = int(max_len)
-        # self.sample_shapes = sample_shapes
-        # if len(sample_shapes) != 4:
-        #     raise ValueError(f"sample_shapes must have length 4, for s, a, r, s', was {len(sample_shapes)}")
-        self.s_buffer = deque(maxlen=self.max_len)
-        self.a_buffer = deque(maxlen=self.max_len)
-        self.r_buffer = deque(maxlen=self.max_len)
-        self.next_s_buffer = deque(maxlen=self.max_len)
-        self.d_buffer = deque(maxlen=self.max_len)
-        if starting_s_a_r_s_d is not None:
-            self.append_samples_batch(*starting_s_a_r_s_d)
+        self._s_buffer = torch.zeros(self.max_len, *s_shape)
+        self._a_buffer = torch.zeros(self.max_len)
+        self._r_buffer = torch.zeros(self.max_len)
+        self._d_buffer = torch.zeros(self.max_len)
+        self._next_s_buffer = torch.zeros(self.max_len, *s_shape)
+        self.current_size = 0
+        self._top = 0
+        if starting_s_a_r_d_s is not None:
+            self.append_samples_batch(*starting_s_a_r_d_s)
 
     def get_samples_batch(self, sample_size):
-        if sample_size > len(self.s_buffer):
-            return (torch.cat(list(self.s_buffer)),
-                    torch.cat(list(self.a_buffer)),
-                    torch.cat(list(self.r_buffer)),
-                    torch.cat(list(self.next_s_buffer)),
-                    torch.cat(list(self.d_buffer)))
-        else:
-            # Too slow:
-            # idxs = torch.multinomial(torch.ones(len(self.s_buffer)), sample_size)
-            # This is better, but is sampling with replacement
-            idxs = np.random.randint(len(self.s_buffer), size=(sample_size,))
-            return (torch.cat([self.s_buffer[i] for i in idxs]),
-                    torch.cat([self.a_buffer[i] for i in idxs]),
-                    torch.cat([self.r_buffer[i] for i in idxs]),
-                    torch.cat([self.next_s_buffer[i] for i in idxs]),
-                    torch.cat([self.d_buffer[i] for i in idxs]))
+        # Sampling with replacement
+        idxs = np.random.randint(self.current_size, size=(sample_size,))
+        # Sampling without replacement is possible, but ~2.5x slower:
+        # idxs = np.random.choice(self.current_size, size=sample_size, replace=(self.current_size < sample_size))
+        return (self._s_buffer[idxs],
+                self._a_buffer[idxs],
+                self._r_buffer[idxs],
+                self._d_buffer[idxs],
+                self._next_s_buffer[idxs])
 
-    def append_samples_batch(self, s_batch, a_batch, r_batch, next_s_batch, d_batch):
+    def append_samples_batch(self, s_batch, a_batch, r_batch, d_batch, next_s_batch):
         batch_len = s_batch.shape[0]
         assert a_batch.shape[0] == batch_len
         assert r_batch.shape[0] == batch_len
         assert next_s_batch.shape[0] == batch_len
         assert d_batch.shape[0] == batch_len
-        self.s_buffer.extend(s_batch.split(1))
-        self.a_buffer.extend(a_batch.split(1))
-        self.r_buffer.extend(r_batch.split(1))
-        self.next_s_buffer.extend(next_s_batch.split(1))
-        self.d_buffer.extend(d_batch.split(1))
-        """
-        if len(self.s_buffer) > self.max_len:
-            self.s_buffer = self.s_buffer[-self.max_len:]
-            self.a_buffer = self.a_buffer[-self.max_len:]
-            self.r_buffer = self.r_buffer[-self.max_len:]
-            self.next_s_buffer = self.next_s_buffer[-self.max_len:]
-            self.d_buffer = self.d_buffer[-self.max_len:]"""
+        new_len = self._top + batch_len
+        if new_len <= self.max_len:
+            self._s_buffer[self._top:new_len] = s_batch
+            self._a_buffer[self._top:new_len] = a_batch
+            self._r_buffer[self._top:new_len] = r_batch
+            self._d_buffer[self._top:new_len] = d_batch
+            self._next_s_buffer[self._top:new_len] = next_s_batch
+            self._top = new_len % self.max_len
+            self.current_size = max(new_len, self.current_size)
+        else:
+            leftover_batch = new_len % self.max_len
+            s_batch_split = s_batch.split((batch_len - leftover_batch, leftover_batch))
+            a_batch_split = a_batch.split((batch_len - leftover_batch, leftover_batch))
+            r_batch_split = r_batch.split((batch_len - leftover_batch, leftover_batch))
+            d_batch_split = d_batch.split((batch_len - leftover_batch, leftover_batch))
+            next_s_batch_split = next_s_batch.split((batch_len - leftover_batch, leftover_batch))
+            self.append_samples_batch(s_batch_split[0],
+                                      a_batch_split[0],
+                                      r_batch_split[0],
+                                      d_batch_split[0],
+                                      next_s_batch_split[0])
+            self.append_samples_batch(s_batch_split[1],
+                                      a_batch_split[1],
+                                      r_batch_split[1],
+                                      d_batch_split[1],
+                                      next_s_batch_split[1])
 
 
 class AWACVectorized:
@@ -135,21 +141,23 @@ class AWACVectorized:
                 s.view(-1, *s.shape[-2:]).cpu().clone(),
                 a.view(-1).detach().cpu().clone(),
                 r.view(-1).cpu().clone(),
-                next_s.view(-1, *next_s.shape[-2:]).cpu().clone(),
-                torch.zeros(r.shape).view(-1) if done else torch.ones(r.shape).view(-1)
+                torch.zeros(r.shape).view(-1) if done else torch.ones(r.shape).view(-1),
+                next_s.view(-1, *next_s.shape[-2:]).cpu().clone()
             )
             s = next_s
             episode_reward_sums += r
             for i in range(train_batches_per_timestep):
                 self.train_batch(batch_size, gamma, lagrange_multiplier)
             self.summary_writer.add_scalar('DEBUG/batch_time_ms', time.time() - start_time, self.true_batch_num)
-            self.summary_writer.add_scalar('DEBUG/replay_buffer_len', len(self.replay_buffer.s_buffer),
+            self.summary_writer.add_scalar('DEBUG/replay_buffer_len', self.replay_buffer.current_size,
+                                           self.true_batch_num)
+            self.summary_writer.add_scalar('DEBUG/replay_buffer__top', self.replay_buffer._top,
                                            self.true_batch_num)
 
         self.save(finished=True)
 
     def train_batch(self, batch_size, gamma, lagrange_multiplier):
-        s_batch, a_batch, r_batch, next_s_batch, d_batch = self.replay_buffer.get_samples_batch(batch_size)
+        s_batch, a_batch, r_batch, d_batch, next_s_batch = self.replay_buffer.get_samples_batch(batch_size)
         s_batch = s_batch.to(device=self.device)
         a_batch = a_batch.to(device=self.device)
         r_batch = r_batch.to(device=self.device)
@@ -218,54 +226,4 @@ class AWACVectorized:
         with open(f'{file_path_base}_cp.txt', 'w') as f:
             f.write(str(serialized_string))
         self.model.to(device=self.device)
-
-
-class ReplayBuffer:
-    def __init__(self, max_len=1e6, starting_s_a_r_s_d=None):
-        self.max_len = int(max_len)
-        # self.sample_shapes = sample_shapes
-        # if len(sample_shapes) != 4:
-        #     raise ValueError(f"sample_shapes must have length 4, for s, a, r, s', was {len(sample_shapes)}")
-        self.s_buffer = []
-        self.a_buffer = []
-        self.r_buffer = []
-        self.next_s_buffer = []
-        self.d_buffer = []
-        if starting_s_a_r_s_d is not None:
-            self.append_samples_batch(*starting_s_a_r_s_d)
-
-    def get_samples_batch(self, sample_size):
-        if sample_size > len(self.s_buffer):
-            return (torch.cat(self.s_buffer),
-                    torch.cat(self.a_buffer),
-                    torch.cat(self.r_buffer),
-                    torch.cat(self.next_s_buffer),
-                    torch.cat(self.d_buffer))
-        else:
-            # Too slow:
-            # idxs = torch.multinomial(torch.ones(len(self.s_buffer)), sample_size)
-            # This is better, but is sampling with replacement
-            idxs = np.random.randint(len(self.s_buffer), size=(sample_size,))
-            return (torch.cat([self.s_buffer[i] for i in idxs]),
-                    torch.cat([self.a_buffer[i] for i in idxs]),
-                    torch.cat([self.r_buffer[i] for i in idxs]),
-                    torch.cat([self.next_s_buffer[i] for i in idxs]),
-                    torch.cat([self.d_buffer[i] for i in idxs]))
-
-    def append_samples_batch(self, s_batch, a_batch, r_batch, next_s_batch, d_batch):
-        batch_len = s_batch.shape[0]
-        assert a_batch.shape[0] == batch_len
-        assert r_batch.shape[0] == batch_len
-        assert next_s_batch.shape[0] == batch_len
-        assert d_batch.shape[0] == batch_len
-        self.s_buffer.extend(s_batch.split(1))
-        self.a_buffer.extend(a_batch.split(1))
-        self.r_buffer.extend(r_batch.split(1))
-        self.next_s_buffer.extend(next_s_batch.split(1))
-        self.d_buffer.extend(d_batch.split(1))
-        if len(self.s_buffer) > self.max_len:
-            self.s_buffer = self.s_buffer[-self.max_len:]
-            self.a_buffer = self.a_buffer[-self.max_len:]
-            self.r_buffer = self.r_buffer[-self.max_len:]
-            self.next_s_buffer = self.next_s_buffer[-self.max_len:]
-            self.d_buffer = self.d_buffer[-self.max_len:]
+]
