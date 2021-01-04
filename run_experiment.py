@@ -40,6 +40,13 @@ graph_nn_kwargs = dict(
     skip_connection_n=1
 )
 model = gnn.GraphNNA3C(**graph_nn_kwargs)
+
+with open(f'runs/small_16_32_v1/570_cp.txt', 'r') as f:
+    serialized_string = f.readline()[2:-1].encode()
+state_dict_bytes = base64.b64decode(serialized_string)
+loaded_state_dicts = pickle.loads(state_dict_bytes)
+model.load_state_dict(loaded_state_dicts['model_state_dict'])
+
 model.to(device=DEVICE)
 optimizer = torch.optim.Adam(model.parameters())
 
@@ -59,21 +66,24 @@ rl_alg_kwargs = dict(
 def model_constructor():
     return gnn.GraphNNA3C(**graph_nn_kwargs)
 
-# initial_opponent_pool = []
+rl_agent_opp_kwargs = dict(
+    device=DEVICE,
+    deterministic_policy=True
+)
 initial_opponent_pool = [
     #va.BasicThompsonSampling(OBS_NORM),
     va.PullVegasSlotMachines(OBS_NORM),
     #va.SavedRLAgent('a3c_agent_v0', device=DEVICE),
-    va.SavedRLAgent('a3c_agent_v1', device=DEVICE),
-    va.SavedRLAgent('a3c_agent_v2', device=DEVICE),
-    va.SavedRLAgent('a3c_agent_v3', device=DEVICE),
-    va.SavedRLAgent('a3c_agent_v4-162', device=DEVICE),
-    va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE),
+    va.SavedRLAgent('a3c_agent_v1', **rl_agent_opp_kwargs),
+    va.SavedRLAgent('a3c_agent_v2', **rl_agent_opp_kwargs),
+    va.SavedRLAgent('a3c_agent_v3', **rl_agent_opp_kwargs),
+    va.SavedRLAgent('a3c_agent_v4-162', **rl_agent_opp_kwargs),
+    va.SavedRLAgent('a3c_agent_small_8_32-790', **rl_agent_opp_kwargs),
 ]
 
-folder_name = f"small_{graph_nn_kwargs['n_hidden_layers']}_{graph_nn_kwargs['layer_sizes']}"
+folder_name = f"small_{graph_nn_kwargs['n_hidden_layers']}_{graph_nn_kwargs['layer_sizes']}_v2"
 a3c_alg = A3CVectorized(model_constructor, optimizer, model=model, device=DEVICE,
-                        exp_folder=Path(f'runs/{folder_name}'),
+                        exp_folder=Path(f'runs/a3c/{folder_name}'),
                         recurrent_model=use_rnn,
                         clip_grads=10.,
                         play_against_past_selves=True,
@@ -83,4 +93,9 @@ a3c_alg = A3CVectorized(model_constructor, optimizer, model=model, device=DEVICE
                         opp_posterior_decay=0.95)
 
 env_kwargs['n_envs'] = 200
-a3c_alg.train(n_episodes=1000, **rl_alg_kwargs, **env_kwargs)
+try:
+    a3c_alg.train(n_episodes=1000, **rl_alg_kwargs, **env_kwargs)
+except KeyboardInterrupt:
+    if a3c_alg.true_ep_num > a3c_alg.checkpoint_freq:
+        print('KeyboardInterrupt: saving model')
+        a3c_alg.save(finished=True)

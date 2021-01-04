@@ -15,9 +15,47 @@ import vectorized_env as ve
 import vectorized_agents as va
 
 
+class ReplayBuffer:
+    def __init__(self, max_len, starting_s_a_r_s):
+        self.max_len = max_len
+        # self.sample_shapes = sample_shapes
+        # if len(sample_shapes) != 4:
+        #     raise ValueError(f"sample_shapes must have length 4, for s, a, r, s', was {len(sample_shapes)}")
+        self.s_buffer = None
+        self.a_buffer = None
+        self.r_buffer = None
+        self.next_s_buffer = None
+        self.append_samples_batch(*starting_s_a_r_s)
+
+    def get_samples_batch(self, sample_size):
+        assert sample_size >= len(self.s_buffer)
+        # TODO
+
+    def append_samples_batch(self, s_batch, a_batch, r_batch, next_s_batch):
+        batch_len = s_batch.shape[0]
+        assert a_batch.shape[0] == batch_len
+        assert r_batch.shape[0] == batch_len
+        assert next_s_batch.shape[0] == batch_len
+        if self.s_buffer is None:
+            self.s_buffer = s_batch
+            self.a_buffer = a_batch
+            self.r_buffer = r_batch
+            self.next_s_buffer = next_s_batch
+        else:
+            self.s_buffer = torch.cat([self.s_buffer, s_batch])
+            self.a_buffer = torch.cat([self.a_buffer, a_batch])
+            self.r_buffer = torch.cat([self.r_buffer, r_batch])
+            self.next_s_buffer = torch.cat([self.next_s_buffer, next_s_batch])
+        if len(self.s_buffer) > self.max_len:
+            self.s_buffer = self.s_buffer[-self.max_len:]
+            self.a_buffer = self.a_buffer[-self.max_len:]
+            self.r_buffer = self.r_buffer[-self.max_len:]
+            self.next_s_buffer = self.next_s_buffer[-self.max_len:]
+
+
 class AWACVectorized:
     def __init__(self, model_constructor, optimizer, model=None, device=torch.device('cuda'),
-                 exp_folder=Path('runs/TEMP'),
+                 exp_folder=Path('runs/awac/TEMP'),
                  recurrent_model=False, clip_grads=10.,
                  play_against_past_selves=True, n_past_selves=4, checkpoint_freq=10, initial_opponent_pool=[],
                  opp_posterior_decay=0.95):
@@ -29,8 +67,8 @@ class AWACVectorized:
             self.model = model
         self.device = device
         self.exp_folder = exp_folder.absolute()
-        if str(self.exp_folder) in ('/Windows/Users/isaia/Documents/GitHub/Kaggle/Santa_2020/runs/TEMP',
-                                    '/home/pressmi/github_misc/Kaggle_Santa_2020/runs/TEMP'):
+        if str(self.exp_folder) in ('/Windows/Users/isaia/Documents/GitHub/Kaggle/Santa_2020/runs/awac/TEMP',
+                                    '/home/pressmi/github_misc/Kaggle_Santa_2020/runs/awac/TEMP'):
             print('WARNING: Using TEMP exp_folder')
             if self.exp_folder.exists():
                 shutil.rmtree(self.exp_folder)

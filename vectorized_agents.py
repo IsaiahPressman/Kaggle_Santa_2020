@@ -195,7 +195,7 @@ class SavedRLAgent(VectorizedAgent):
                 layer_class=gnn.FullyConnectedGNNLayer,
                 skip_connection_n=1
             )
-            ss_filename = 'runs/v4/cp_162.txt'
+            ss_filename = 'runs/a3c/v4/cp_162.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'a3c_agent_small_8_32-790':
             self.model = gnn.GraphNNA3C(
@@ -206,7 +206,7 @@ class SavedRLAgent(VectorizedAgent):
                 layer_class=gnn.SmallFullyConnectedGNNLayer,
                 skip_connection_n=1
             )
-            ss_filename = 'runs/small_8_32/790_cp.txt'
+            ss_filename = 'runs/a3c/small_8_32/790_cp.txt'
             self.obs_type = ve.SUMMED_OBS
         else:
             raise ValueError(f'Unrecognized agent_name: {agent_name}')

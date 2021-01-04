@@ -17,7 +17,7 @@ import vectorized_agents as va
 
 class A3CVectorized:
     def __init__(self, model_constructor, optimizer, model=None, device=torch.device('cuda'),
-                 exp_folder=Path('runs/TEMP'),
+                 exp_folder=Path('runs/a3c/TEMP'),
                  recurrent_model=False, clip_grads=10.,
                  play_against_past_selves=True, n_past_selves=4, checkpoint_freq=10, initial_opponent_pool=[],
                  opp_posterior_decay=0.95):
@@ -29,8 +29,8 @@ class A3CVectorized:
             self.model = model
         self.device = device
         self.exp_folder = exp_folder.absolute()
-        if str(self.exp_folder) in ('/Windows/Users/isaia/Documents/GitHub/Kaggle/Santa_2020/runs/TEMP',
-                                    '/home/pressmi/github_misc/Kaggle_Santa_2020/runs/TEMP'):
+        if str(self.exp_folder) in ('/Windows/Users/isaia/Documents/GitHub/Kaggle/Santa_2020/runs/a3c/TEMP',
+                                    '/home/pressmi/github_misc/Kaggle_Santa_2020/runs/a3c/TEMP'):
             print('WARNING: Using TEMP exp_folder')
             if self.exp_folder.exists():
                 shutil.rmtree(self.exp_folder)
@@ -215,7 +215,7 @@ class A3CVectorized:
 
     def save(self, finished=False):
         if finished:
-            file_path_base = self.exp_folder / f'final_{self.true_ep_num}'
+            file_path_base = self.exp_folder / f'final_{self.true_ep_num - 1}'
         else:
             file_path_base = self.exp_folder / str(self.true_ep_num)
         # Save model params
@@ -273,6 +273,6 @@ class A3CVectorized:
             checkpoint_opp.load_state_dict(self.checkpoints[checkpoint_idx])
             checkpoint_opp.to(device=self.device)
             checkpoint_opp.eval()
-            return va.RLModelWrapperAgent(checkpoint_opp, self.env.obs_type)
+            return va.RLModelWrapperAgent(checkpoint_opp, self.env.obs_type, deterministic_policy=True)
         else:
             raise IndexError(f'Index {idx} is out of bounds')
