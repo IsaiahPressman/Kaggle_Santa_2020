@@ -315,7 +315,7 @@ class ReplayBuffer:
         if starting_s_a_r_d_s is not None:
             self.append_samples_batch(*starting_s_a_r_d_s)
         if freeze_starting_buffer:
-            if self.current_size >= max_len / 2:
+            if self.current_size >= max_len / 2.:
                 raise ValueError('It is not recommended that >= 1/2 the buffer be kept/frozen forever')
             else:
                 self._min_top = self.current_size
@@ -344,7 +344,10 @@ class ReplayBuffer:
             self._r_buffer[self._top:new_len] = r_batch
             self._d_buffer[self._top:new_len] = d_batch
             self._next_s_buffer[self._top:new_len] = next_s_batch
-            self._top = new_len % (self.max_len - self._min_top)
+            if new_len == self.max_len:
+                self._top = self._min_top
+            else:
+                self._top = new_len
             self.current_size = max(new_len, self.current_size)
         else:
             leftover_batch = new_len % self.max_len

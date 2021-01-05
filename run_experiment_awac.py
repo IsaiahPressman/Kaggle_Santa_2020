@@ -43,7 +43,7 @@ env_kwargs = dict(
 )
 rl_alg_kwargs = dict(
     batch_size=1024,
-    n_pretrain_batches=25000,
+    n_pretrain_batches=10000,
     n_steps_per_epoch=1999,
     n_train_batches_per_epoch=None,
     gamma=0.99,
