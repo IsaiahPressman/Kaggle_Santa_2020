@@ -5,11 +5,23 @@ EVERY_STEP_TRUE = 'every_step_true'
 EVERY_STEP_EV = 'every_step_ev'
 EVERY_STEP_EV_ZEROSUM = 'every_step_ev_zerosum'
 END_OF_GAME_TRUE = 'end_of_game_true'
-#END_OF_GAME_EV = 3
+# END_OF_GAME_EV = 3
 
 SUMMED_OBS = 'summed_obs'
 LAST_STEP_OBS = 'last_step_obs'
-#ONEHOT_OBS = 2
+# ONEHOT_OBS = 2
+
+REWARD_TYPES = (
+    EVERY_STEP_TRUE,
+    EVERY_STEP_EV,
+    EVERY_STEP_EV_ZEROSUM,
+    END_OF_GAME_TRUE
+)
+
+OBS_TYPES = (
+    SUMMED_OBS,
+    LAST_STEP_OBS
+)
 
 
 # A vectorized and GPU-compatible recreation of the kaggle "MAB" environment
@@ -25,13 +37,13 @@ class KaggleMABEnvTorchVectorized:
         obs_type=SUMMED_OBS,
         opponent=None,
         opponent_obs_type=None,
-        normalize_reward=True,
+        normalize_reward=False,
         env_device=torch.device('cuda'),
         out_device=torch.device('cuda'),
     ):
         # Assert parameter conditions
         assert 0 <= decay_rate <= 1.
-        assert reward_type in (EVERY_STEP_TRUE, EVERY_STEP_EV, EVERY_STEP_EV_ZEROSUM, END_OF_GAME_TRUE)
+        assert reward_type in REWARD_TYPES
         if reward_type in (END_OF_GAME_TRUE, EVERY_STEP_EV_ZEROSUM):
             assert n_players >= 2
         else:
@@ -49,6 +61,7 @@ class KaggleMABEnvTorchVectorized:
         if self.reward_type == EVERY_STEP_EV_ZEROSUM:
             assert self.n_players == 2
         self.obs_type = obs_type
+        assert self.obs_type in OBS_TYPES
         self.opponent = opponent
         if self.opponent is not None:
             assert self.n_players == 2
@@ -56,12 +69,13 @@ class KaggleMABEnvTorchVectorized:
             self.opponent_obs_type = self.obs_type
         else:
             self.opponent_obs_type = opponent_obs_type
+        assert self.opponent_obs_type in OBS_TYPES
         if not normalize_reward or self.reward_type in (END_OF_GAME_TRUE,):
             self.r_norm = 1.
         else:
             self.r_norm = 1. / (torch.sum(self.decay_rate ** torch.arange(self.n_steps, dtype=torch.float32)) * \
-                                torch.arange(self.n_bandits, dtype=torch.float32).sum() \
-                                / (self.n_bandits * self.n_players))
+                                torch.arange(self.n_bandits, dtype=torch.float32).sum() / \
+                                (self.n_bandits * self.n_players))
         self.env_device = env_device
         self.out_device = out_device
 

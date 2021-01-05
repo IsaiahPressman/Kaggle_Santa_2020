@@ -50,7 +50,7 @@ class SmallFullyConnectedGNNLayer(nn.Module):
         self.recombine_features = nn.Linear(in_features * 2, out_features)
         self.squeeze_out = squeeze_out
         # Initialize linear layer weights
-        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.2)
+        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.3)
         nn.init.constant_(self.recombine_features.bias, 0.)
 
     def forward(self, features):

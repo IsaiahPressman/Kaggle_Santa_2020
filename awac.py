@@ -15,7 +15,8 @@ import vectorized_env as ve
 
 
 class AWACVectorized:
-    def __init__(self, model, optimizer, replay_buffer, validation_env_kwargs_dicts=(),
+    def __init__(self, model, optimizer, replay_buffer,
+                 validation_env_kwargs_dicts=(), deterministic_validation_policy=True,
                  device=torch.device('cuda'), exp_folder=Path('runs/awac/TEMP'),
                  clip_grads=10., checkpoint_freq=10):
         self.model = model
@@ -35,7 +36,7 @@ class AWACVectorized:
                 opponent_names.append('None')
         if len(opponent_names) != len(np.unique(opponent_names)):
             raise ValueError(f'Duplicate opponents encountered in validation_env_kwargs_dicts : {opponent_names}')
-
+        self.deterministic_validation_policy = deterministic_validation_policy
         self.device = device
         self.exp_folder = exp_folder.absolute()
         if str(self.exp_folder) in ('/Windows/Users/isaia/Documents/GitHub/Kaggle/Santa_2020/runs/awac/TEMP',
@@ -75,17 +76,15 @@ class AWACVectorized:
         if n_train_batches_per_epoch is None:
             n_train_batches_per_epoch = n_steps_per_epoch
 
-        self.run_validation()
         print(f'Pre-training on {n_pretrain_batches} batches')
         for batch in tqdm.trange(n_pretrain_batches):
             self.train_on_batch(batch_size, gamma, lagrange_multiplier)
 
-        if n_pretrain_batches > 0:
-            self.run_validation()
+        self.run_validation()
         print(f'\nRunning main training loop with {n_epochs} epochs')
         for epoch in range(n_epochs):
             print(f'Epoch #{epoch}:')
-            print(f'Sampling {n_steps_per_epoch} time-steps from environment')
+            print(f'Sampling {n_steps_per_epoch} time-steps from the environment')
             s, r, done, info_dict = self.env.reset()
             episode_reward_sums = r
             for step in tqdm.trange(n_steps_per_epoch):
@@ -96,9 +95,15 @@ class AWACVectorized:
                     s.view(-1, *s.shape[-2:]).cpu().clone(),
                     a.view(-1).detach().cpu().clone(),
                     r.view(-1).cpu().clone(),
-                    torch.zeros(r.shape).view(-1) if done else torch.ones(r.shape).view(-1),
+                    torch.ones(r.shape).view(-1) if done else torch.zeros(r.shape).view(-1),
                     next_s.view(-1, *next_s.shape[-2:]).cpu().clone()
                 )
+                self.summary_writer.add_scalar(f'DEBUG/replay_buffer_size',
+                                               self.replay_buffer.current_size,
+                                               self.train_step_counter)
+                self.summary_writer.add_scalar(f'DEBUG/replay_buffer__top',
+                                               self.replay_buffer._top,
+                                               self.train_step_counter)
                 s = next_s
                 episode_reward_sums += r
                 if done:
@@ -137,13 +142,15 @@ class AWACVectorized:
         logits, values = self.model(s_batch.to(device=self.device))
         _, v_next_s = self.model(next_s_batch.to(device=self.device))
         # Reward of 0 for terminal states
-        v_t = (r_batch + gamma * v_next_s * (1 - d_batch)).detach()
+        v_t = (r_batch + gamma * v_next_s * (1. - d_batch)).detach()
         # Huber loss for critic
         critic_loss = F.smooth_l1_loss(values, v_t, reduction='none').view(-1)
 
         td = v_t - values
         log_probs = distributions.Categorical(F.softmax(logits, dim=-1)).log_prob(a_batch.view(-1))
-        actor_loss = -(log_probs * torch.exp(td.view(-1) / lagrange_multiplier))
+        weights = torch.exp(td / lagrange_multiplier).view(-1)
+        # weights = F.softmax(td.view(-1) / lagrange_multiplier, dim=-1)
+        actor_loss = -(log_probs * weights.detach())
 
         total_loss = (critic_loss + actor_loss).mean()
         self.optimizer.zero_grad()
@@ -164,21 +171,36 @@ class AWACVectorized:
     def log_train_episode(self, episode_reward_sums, final_info_dict):
         self.summary_writer.add_scalar('episode/reward', episode_reward_sums.numpy().item(), self.episode_counter)
         if self.env.opponent is None:
-            pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1).mean().numpy().item()
+            pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)
         else:
-            pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].mean().numpy().item()
-        self.summary_writer.add_scalar(
-            'episode/pull_rewards_sum',
+            pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0]
+        self.summary_writer.add_histogram(
+            'episode/agent_pull_rewards',
             pull_rewards_sum,
             self.episode_counter
         )
-        self.summary_writer.add_scalar(
+        self.summary_writer.add_histogram(
             'episode/p1_pull_rewards',
+            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].numpy(),
+            self.episode_counter
+        )
+        self.summary_writer.add_histogram(
+            'episode/p2_pull_rewards',
+            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 1].numpy(),
+            self.episode_counter
+        )
+        self.summary_writer.add_scalar(
+            'episode/mean_agent_pull_rewards',
+            pull_rewards_sum.mean().numpy().item(),
+            self.episode_counter
+        )
+        self.summary_writer.add_scalar(
+            'episode/mean_p1_pull_rewards',
             final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].mean().numpy().item(),
             self.episode_counter
         )
         self.summary_writer.add_scalar(
-            'episode/p2_pull_rewards',
+            'episode/mean_p2_pull_rewards',
             final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 1].mean().numpy().item(),
             self.episode_counter
         )
@@ -218,16 +240,16 @@ class AWACVectorized:
             )
             self.summary_writer.add_scalar(
                 f'validation/{env_name}_win_percent',
-                ers.mean().numpy().item(),
+                ers.mean().numpy().item() * 100.,
                 self.validation_counter
             )
             self.summary_writer.add_scalar(
-                f'validation/{env_name}_hero_pull_rewards',
+                f'validation/{env_name}_mean_hero_pull_rewards',
                 fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 0].mean().numpy().item(),
                 self.validation_counter
             )
             self.summary_writer.add_scalar(
-                f'validation/{env_name}_villain_pull_rewards',
+                f'validation/{env_name}_mean_villain_pull_rewards',
                 fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 1].mean().numpy().item(),
                 self.validation_counter
             )
@@ -244,7 +266,10 @@ class AWACVectorized:
                 episode_reward_sums.append(r)
                 while not done:
                     start_time = time.time()
-                    a = self.model.choose_best_action(s.to(device=self.device).unsqueeze(0))
+                    if self.deterministic_validation_policy:
+                        a = self.model.choose_best_action(s.to(device=self.device).unsqueeze(0))
+                    else:
+                        a = self.model.sample_action(s.to(device=self.device).unsqueeze(0))
                     next_s, r, done, info_dict = val_env.step(a.squeeze(0))
                     s = next_s
                     episode_reward_sums[-1] += r
@@ -262,7 +287,7 @@ class AWACVectorized:
 
     def save(self, finished=False):
         if finished:
-            file_path_base = self.exp_folder / f'final_{self.epoch_counter - 1}'
+            file_path_base = self.exp_folder / f'final_{self.epoch_counter}'
         else:
             file_path_base = self.exp_folder / str(self.epoch_counter)
         # Save model params
@@ -277,7 +302,7 @@ class AWACVectorized:
 
 
 class ReplayBuffer:
-    def __init__(self, s_shape, max_len=1e6, starting_s_a_r_d_s=None):
+    def __init__(self, s_shape, max_len=1e6, starting_s_a_r_d_s=None, freeze_starting_buffer=False):
         self.max_len = int(max_len)
         self._s_buffer = torch.zeros(self.max_len, *s_shape)
         self._a_buffer = torch.zeros(self.max_len)
@@ -286,8 +311,14 @@ class ReplayBuffer:
         self._next_s_buffer = torch.zeros(self.max_len, *s_shape)
         self.current_size = 0
         self._top = 0
+        self._min_top = 0
         if starting_s_a_r_d_s is not None:
             self.append_samples_batch(*starting_s_a_r_d_s)
+        if freeze_starting_buffer:
+            if self.current_size >= max_len / 2:
+                raise ValueError('It is not recommended that >= 1/2 the buffer be kept/frozen forever')
+            else:
+                self._min_top = self.current_size
 
     def get_samples_batch(self, sample_size):
         # Sampling with replacement
@@ -313,7 +344,7 @@ class ReplayBuffer:
             self._r_buffer[self._top:new_len] = r_batch
             self._d_buffer[self._top:new_len] = d_batch
             self._next_s_buffer[self._top:new_len] = next_s_batch
-            self._top = new_len % self.max_len
+            self._top = new_len % (self.max_len - self._min_top)
             self.current_size = max(new_len, self.current_size)
         else:
             leftover_batch = new_len % self.max_len
