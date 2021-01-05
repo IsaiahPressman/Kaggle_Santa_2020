@@ -4,10 +4,16 @@ import torch.nn.functional as F
 
 
 class FullyConnectedGNNLayer(nn.Module):
-    def __init__(self, n_nodes, in_features, out_features, activation_func=nn.ReLU(), squeeze_out=False):
+    def __init__(self, n_nodes, in_features, out_features,
+                 activation_func=nn.ReLU(), normalize=False, squeeze_out=False):
         super().__init__()
         self.n_nodes = n_nodes
         self.activation_func = activation_func
+        self.normalize = normalize
+        if self.normalize:
+            self.norm_layer = nn.BatchNorm1d(out_features)
+        else:
+            self.norm_layer = None
         self.transform_features = nn.Linear(in_features, out_features)
         self.message_passing_mat = nn.Parameter(
             (torch.ones((n_nodes, n_nodes)) - torch.eye(n_nodes)) / (n_nodes - 1),
@@ -16,8 +22,8 @@ class FullyConnectedGNNLayer(nn.Module):
         self.recombine_features = nn.Linear(out_features*2, out_features)
         self.squeeze_out = squeeze_out
         # Initialize linear layer weights
-        nn.init.normal_(self.transform_features.weight, mean=0., std=0.3)
-        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.3)
+        nn.init.normal_(self.transform_features.weight, mean=0., std=0.2)
+        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.2)
         nn.init.constant_(self.transform_features.bias, 0.)
         nn.init.constant_(self.recombine_features.bias, 0.)
     
@@ -26,23 +32,33 @@ class FullyConnectedGNNLayer(nn.Module):
             self.transform_features(features)
         )
         messages = torch.matmul(self.message_passing_mat, features_transformed)
-        features_messages_combined = self.activation_func(
-            self.recombine_features(torch.cat([features_transformed, messages], dim=-1))
-        )
+        out = self.recombine_features(torch.cat([features_transformed, messages], dim=-1))
+        if self.normalize:
+            out_shape = out.shape
+            out = out.view(torch.prod(torch.tensor(out_shape[:-2])).item(), *out_shape[-2:])
+            out = self.norm_layer(out.transpose(1, 2)).transpose(1, 2)
+            out = out.view(out_shape)
+        out = self.activation_func(out)
         if self.squeeze_out:
-            return features_messages_combined.squeeze(dim=-1)
+            return out.squeeze(dim=-1)
         else:
-            return features_messages_combined
+            return out
 
     def reset_hidden_states(self):
         pass
 
 
 class SmallFullyConnectedGNNLayer(nn.Module):
-    def __init__(self, n_nodes, in_features, out_features, activation_func=nn.ReLU(), squeeze_out=False):
+    def __init__(self, n_nodes, in_features, out_features,
+                 activation_func=nn.ReLU(), normalize=False, squeeze_out=False):
         super().__init__()
         self.n_nodes = n_nodes
         self.activation_func = activation_func
+        self.normalize = normalize
+        if self.normalize:
+            self.norm_layer = nn.BatchNorm1d(out_features)
+        else:
+            self.norm_layer = None
         self.message_passing_mat = nn.Parameter(
             (torch.ones((n_nodes, n_nodes)) - torch.eye(n_nodes)) / (n_nodes - 1),
             requires_grad=False
@@ -50,18 +66,22 @@ class SmallFullyConnectedGNNLayer(nn.Module):
         self.recombine_features = nn.Linear(in_features * 2, out_features)
         self.squeeze_out = squeeze_out
         # Initialize linear layer weights
-        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.3)
+        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.2)
         nn.init.constant_(self.recombine_features.bias, 0.)
 
     def forward(self, features):
         messages = torch.matmul(self.message_passing_mat, features)
-        features_messages_combined = self.activation_func(
-            self.recombine_features(torch.cat([features, messages], dim=-1))
-        )
+        out = self.recombine_features(torch.cat([features, messages], dim=-1))
+        if self.normalize:
+            out_shape = out.shape
+            out = out.view(torch.prod(torch.tensor(out_shape[:-2])).item(), *out_shape[-2:])
+            out = self.norm_layer(out.transpose(1, 2)).transpose(1, 2)
+            out = out.view(out_shape)
+        out = self.activation_func(out)
         if self.squeeze_out:
-            return features_messages_combined.squeeze(dim=-1)
+            return out.squeeze(dim=-1)
         else:
-            return features_messages_combined
+            return out
 
     def reset_hidden_states(self):
         pass
@@ -142,7 +162,7 @@ class GraphNNResidualBase(nn.Module):
         
 class GraphNNActorCritic(nn.Module):
     def __init__(self, in_features, n_nodes, n_hidden_layers, layer_sizes, layer_class,
-                 activation_func=nn.ReLU(), skip_connection_n=1):
+                 activation_func=nn.ReLU(), skip_connection_n=1, normalize=False):
         super().__init__()
         
         # Define network
@@ -154,7 +174,7 @@ class GraphNNActorCritic(nn.Module):
         layers = [layer_class(n_nodes, in_features, layer_sizes[0], activation_func=activation_func)]
         for i in range(n_hidden_layers):
             layers.append(layer_class(n_nodes, layer_sizes[i], layer_sizes[i+1],
-                                      activation_func=activation_func))
+                                      activation_func=activation_func, normalize=normalize))
         
         if skip_connection_n == 0:
             self.base = nn.Sequential(*layers)

@@ -18,10 +18,11 @@ OBS_NORM = 100. / 1999.
 graph_nn_kwargs = dict(
     in_features=3,
     n_nodes=100,
-    n_hidden_layers=5,
+    n_hidden_layers=12,
     layer_sizes=32,
-    layer_class=gnn.FullyConnectedGNNLayer,
-    skip_connection_n=1
+    layer_class=gnn.SmallFullyConnectedGNNLayer,
+    skip_connection_n=1,
+    normalize=True
 )
 model = gnn.GraphNNActorCritic(**graph_nn_kwargs)
 """
@@ -32,7 +33,7 @@ loaded_state_dicts = pickle.loads(state_dict_bytes)
 model.load_state_dict(loaded_state_dicts['model_state_dict'])
 """
 model.to(device=DEVICE)
-optimizer = torch.optim.Adam(model.parameters())
+optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-4)
 
 env_kwargs = dict(
     env_device=DEVICE,
@@ -44,6 +45,7 @@ env_kwargs = dict(
 rl_alg_kwargs = dict(
     batch_size=1024,
     n_pretrain_batches=10000,
+    #n_pretrain_batches=0,
     n_steps_per_epoch=1999,
     n_train_batches_per_epoch=None,
     gamma=0.99,
@@ -53,10 +55,8 @@ replay_buffer = ReplayBuffer(
     s_shape=(100, 3),
     max_len=2e6,
     #starting_s_a_r_d_s=None,
-    starting_s_a_r_d_s=load_s_a_r_d_s(
-        '/home/isaiah/GitHub/Kaggle/Santa_2020/episode_scraping/latest_250_replays_database/'
-    ),
-    freeze_starting_buffer=True
+    starting_s_a_r_d_s=load_s_a_r_d_s('/home/isaiah/GitHub/Kaggle/Santa_2020/episode_scraping/latest_250_replays_database/'),
+    freeze_starting_buffer=False
 )
 validation_env_kwargs_base = dict(
     n_envs=1000,
@@ -83,8 +83,9 @@ for opponent_kwargs in validation_opponent_env_kwargs:
     validation_env_kwargs_dicts.append(copy.copy(validation_env_kwargs_base))
     validation_env_kwargs_dicts[-1].update(opponent_kwargs)
 
-
-folder_name = f"{graph_nn_kwargs['n_hidden_layers']}_{graph_nn_kwargs['layer_sizes']}_v1"
+is_small = 'small_' if graph_nn_kwargs['layer_class'] == gnn.SmallFullyConnectedGNNLayer else ''
+folder_name = f"{is_small}{graph_nn_kwargs['n_hidden_layers']}_{graph_nn_kwargs['layer_sizes']}_" \
+              f"{graph_nn_kwargs['skip_connection_n']}_v1"
 awac_alg = AWACVectorized(model, optimizer, replay_buffer,
                           validation_env_kwargs_dicts=validation_env_kwargs_dicts,
                           deterministic_validation_policy=True,
@@ -95,7 +96,9 @@ awac_alg = AWACVectorized(model, optimizer, replay_buffer,
 this_script = Path(__file__).absolute()
 shutil.copy(this_script, awac_alg.exp_folder / f'_{this_script.name}')
 
-env_kwargs['n_envs'] = 64
+env_kwargs['n_envs'] = 128
+#env_kwargs['opponent'] = va.BasicThompsonSampling(OBS_NORM)
+#env_kwargs['opponent_obs_type'] = ve.SUMMED_OBS
 try:
     awac_alg.train(
         ve.KaggleMABEnvTorchVectorized(**env_kwargs),

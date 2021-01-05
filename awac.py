@@ -83,6 +83,7 @@ class AWACVectorized:
         self.run_validation()
         print(f'\nRunning main training loop with {n_epochs} epochs')
         for epoch in range(n_epochs):
+            self.model.eval()
             print(f'Epoch #{epoch}:')
             print(f'Sampling {n_steps_per_epoch} time-steps from the environment')
             s, r, done, info_dict = self.env.reset()
@@ -119,6 +120,7 @@ class AWACVectorized:
                                                self.train_step_counter)
                 self.train_step_counter += 1
 
+            self.model.train()
             print(f'Training on {n_train_batches_per_epoch} batches from the replay buffer')
             for batch in tqdm.trange(n_train_batches_per_epoch):
                 self.train_on_batch(batch_size, gamma, lagrange_multiplier)
