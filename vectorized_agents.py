@@ -215,7 +215,7 @@ class SavedRLAgent(VectorizedAgent):
             self.obs_type = ve.SUMMED_OBS_WITH_TIMESTEP
         else:
             raise ValueError(f'Unrecognized agent_name: {agent_name}')
-        with open(f'saved_rl_agents/{agent_name}.txt', 'r') as f:
+        with open(f'saved_rl_models/{agent_name}.txt', 'r') as f:
             sd = pickle.loads(base64.b64decode(f.readline()[2:-1].encode()))['model_state_dict']
         self.model.load_state_dict(sd)
         self.model.to(device=device)
