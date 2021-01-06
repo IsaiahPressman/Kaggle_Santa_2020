@@ -208,6 +208,18 @@ class SavedRLAgent(VectorizedAgent):
             )
             ss_filename = 'runs/a3c/small_8_32/790_cp.txt'
             self.obs_type = ve.SUMMED_OBS
+        elif agent_name == 'awac_agent_4_20_1_norm_v1-215':
+            self.model = gnn.GraphNNActorCritic(
+                in_features=4,
+                n_nodes=100,
+                n_hidden_layers=4,
+                layer_sizes=20,
+                layer_class=gnn.FullyConnectedGNNLayer,
+                skip_connection_n=1,
+                normalize=True
+            )
+            ss_filename = 'runs/awac/4_20_1_norm_v1/215_cp.txt'
+            self.obs_type = ve.SUMMED_OBS_WITH_TIMESTEP
         else:
             raise ValueError(f'Unrecognized agent_name: {agent_name}')
         with open(ss_filename, 'r') as f:

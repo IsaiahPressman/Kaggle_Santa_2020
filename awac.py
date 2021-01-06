@@ -72,10 +72,10 @@ class AWACVectorized:
     def train(self, env, batch_size, n_pretrain_batches, n_epochs, n_steps_per_epoch,
               n_train_batches_per_epoch=None, gamma=0.99, lagrange_multiplier=1.):
         self.env = env
-        self.model.train()
         if n_train_batches_per_epoch is None:
             n_train_batches_per_epoch = n_steps_per_epoch
 
+        self.model.train()
         print(f'Pre-training on {n_pretrain_batches} batches')
         for batch in tqdm.trange(n_pretrain_batches):
             self.train_on_batch(batch_size, gamma, lagrange_multiplier)
@@ -115,8 +115,8 @@ class AWACVectorized:
                     self.episode_counter += 1
                     s, r, done, info_dict = self.env.reset()
                     episode_reward_sums = r
-                self.summary_writer.add_scalar('time/exploration_step_time_s',
-                                               time.time() - start_time,
+                self.summary_writer.add_scalar('time/exploration_step_time_ms',
+                                               (time.time() - start_time) * 1000,
                                                self.train_step_counter)
                 self.train_step_counter += 1
 
@@ -159,7 +159,9 @@ class AWACVectorized:
         total_loss.backward()
         self.optimizer.step()
         self.log_batch(actor_loss.mean(), critic_loss.mean(), total_loss)
-        self.summary_writer.add_scalar('time/batch_time_s', time.time() - start_time, self.batch_counter)
+        self.summary_writer.add_scalar('time/batch_time_ms',
+                                       (time.time() - start_time) * 1000,
+                                       self.batch_counter)
         self.batch_counter += 1
 
     def log_batch(self, actor_loss, critic_loss, total_loss):
@@ -171,7 +173,9 @@ class AWACVectorized:
                                        self.batch_counter)
 
     def log_train_episode(self, episode_reward_sums, final_info_dict):
-        self.summary_writer.add_scalar('episode/reward', episode_reward_sums.numpy().item(), self.episode_counter)
+        self.summary_writer.add_scalar(f'episode/reward_{self.env.reward_type}',
+                                       episode_reward_sums.numpy().item(),
+                                       self.episode_counter)
         if self.env.opponent is None:
             pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)
         else:
@@ -257,6 +261,7 @@ class AWACVectorized:
             )
 
     def run_validation(self):
+        self.model.eval()
         if len(self.validation_env_kwargs_dicts) > 0:
             print(f'Validating model performance in {len(self.validation_env_kwargs_dicts)} environments')
             episode_reward_sums = []
@@ -275,8 +280,8 @@ class AWACVectorized:
                     next_s, r, done, info_dict = val_env.step(a.squeeze(0))
                     s = next_s
                     episode_reward_sums[-1] += r
-                    self.summary_writer.add_scalar(f'time/val_env{i}_step_time_s',
-                                                   time.time() - start_time,
+                    self.summary_writer.add_scalar(f'time/val_env{i}_step_time_ms',
+                                                   (time.time() - start_time) * 1000,
                                                    self.validation_step_counters[i])
                     self.validation_step_counters[i] += 1
                 episode_reward_sums[-1] = episode_reward_sums[-1].mean(dim=-1).cpu().clone() / val_env.r_norm
