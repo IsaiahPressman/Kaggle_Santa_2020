@@ -246,7 +246,8 @@ class AWACVectorized:
             )
             self.summary_writer.add_scalar(
                 f'validation/{env_name}_win_percent',
-                ers.mean().numpy().item() * 100.,
+                # W/D/L values are 1/0/-1, so they need to be scaled to 1/0.5/0 to be represented as a percent
+                (ers.mean().numpy().item() + 1) / 2. * 100.,
                 self.validation_counter
             )
             self.summary_writer.add_scalar(
@@ -321,6 +322,16 @@ class ReplayBuffer:
         self._min_top = 0
         if starting_s_a_r_d_s is not None:
             self.append_samples_batch(*starting_s_a_r_d_s)
+            # Randomly shuffle initial experiences
+            shuffled_idxs = np.arange(self.current_size)
+            np.random.shuffle(shuffled_idxs)
+            shuffled_idxs = np.append(shuffled_idxs, np.arange(self.current_size, self.max_len))
+            self._s_buffer = self._s_buffer[torch.from_numpy(shuffled_idxs)]
+            self._a_buffer = self._a_buffer[torch.from_numpy(shuffled_idxs)]
+            self._r_buffer = self._r_buffer[torch.from_numpy(shuffled_idxs)]
+            self._d_buffer = self._d_buffer[torch.from_numpy(shuffled_idxs)]
+            self._next_s_buffer = self._next_s_buffer[torch.from_numpy(shuffled_idxs)]
+
         if freeze_starting_buffer:
             if self.current_size >= max_len / 2.:
                 raise ValueError('It is not recommended that >= 1/2 the buffer be kept/frozen forever')
