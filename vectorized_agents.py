@@ -151,7 +151,6 @@ class SavedRLAgent(VectorizedAgent):
                 layer_class=gnn.FullyConnectedGNNLayer,
                 skip_connection_n=0
             )
-            ss_filename = 'rl_agents/ss_a3c_agent_v0.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'a3c_agent_v1':
             self.model = gnn.GraphNNActorCritic(
@@ -162,7 +161,6 @@ class SavedRLAgent(VectorizedAgent):
                 layer_class=gnn.FullyConnectedGNNLayer,
                 skip_connection_n=0
             )
-            ss_filename = 'rl_agents/ss_a3c_agent_v1.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'a3c_agent_v2':
             self.model = gnn.GraphNNActorCritic(
@@ -173,7 +171,6 @@ class SavedRLAgent(VectorizedAgent):
                 layer_class=gnn.FullyConnectedGNNLayer,
                 skip_connection_n=1
             )
-            ss_filename = 'rl_agents/ss_a3c_agent_v2.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'a3c_agent_v3':
             self.model = gnn.GraphNNActorCritic(
@@ -184,7 +181,6 @@ class SavedRLAgent(VectorizedAgent):
                 layer_class=gnn.FullyConnectedGNNLayer,
                 skip_connection_n=1
             )
-            ss_filename = 'rl_agents/ss_a3c_agent_v3.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'a3c_agent_v4-162':
             self.model = gnn.GraphNNActorCritic(
@@ -195,7 +191,6 @@ class SavedRLAgent(VectorizedAgent):
                 layer_class=gnn.FullyConnectedGNNLayer,
                 skip_connection_n=1
             )
-            ss_filename = 'runs/a3c/v4/cp_162.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'a3c_agent_small_8_32-790':
             self.model = gnn.GraphNNActorCritic(
@@ -206,7 +201,6 @@ class SavedRLAgent(VectorizedAgent):
                 layer_class=gnn.SmallFullyConnectedGNNLayer,
                 skip_connection_n=1
             )
-            ss_filename = 'runs/a3c/small_8_32/790_cp.txt'
             self.obs_type = ve.SUMMED_OBS
         elif agent_name == 'awac_agent_4_20_1_norm_v1-215':
             self.model = gnn.GraphNNActorCritic(
@@ -218,11 +212,10 @@ class SavedRLAgent(VectorizedAgent):
                 skip_connection_n=1,
                 normalize=True
             )
-            ss_filename = 'runs/awac/4_20_1_norm_v1/215_cp.txt'
             self.obs_type = ve.SUMMED_OBS_WITH_TIMESTEP
         else:
             raise ValueError(f'Unrecognized agent_name: {agent_name}')
-        with open(ss_filename, 'r') as f:
+        with open(f'saved_rl_agents/{agent_name}.txt', 'r') as f:
             sd = pickle.loads(base64.b64decode(f.readline()[2:-1].encode()))['model_state_dict']
         self.model.load_state_dict(sd)
         self.model.to(device=device)
