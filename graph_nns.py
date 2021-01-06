@@ -146,7 +146,7 @@ class GraphNNResidualBase(nn.Module):
         for layer_num, layer in enumerate(self.layers):
             if (len(self.layers) - layer_num - 1) % self.skip_connection_n == 0:
                 x = layer(x)
-                if identity is not None:
+                if identity is not None and identity.shape == x.shape:
                     x = x + identity
                 identity = x
             else:
