@@ -170,12 +170,12 @@ class GraphNNActorCritic(nn.Module):
             layer_sizes = [layer_sizes] * (n_hidden_layers + 1 + preprocessing_layer)
         elif len(layer_sizes) == 1:
             layer_sizes = layer_sizes * (n_hidden_layers + 1 + preprocessing_layer)
-        if len(layer_sizes) != n_hidden_layers + 1:
+        if len(layer_sizes) != n_hidden_layers + 1 + preprocessing_layer:
             raise ValueError(f'len(layer_sizes) must equal n_hidden_layers + 1 (+ 1 again if preprocessing_layer), '
                              f'was {len(layer_sizes)} but should have been {n_hidden_layers+1+preprocessing_layer}')
         if preprocessing_layer:
-            layers = [nn.Linear(in_features, layer_sizes[0]),
-                      activation_func,
+            layers = [nn.Sequential(nn.Linear(in_features, layer_sizes[0]),
+                                    activation_func),
                       layer_class(n_nodes, layer_sizes[0], layer_sizes[1], activation_func=activation_func)]
         else:
             layers = [layer_class(n_nodes, in_features, layer_sizes[0], activation_func=activation_func)]
