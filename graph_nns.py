@@ -162,18 +162,25 @@ class GraphNNResidualBase(nn.Module):
         
 class GraphNNActorCritic(nn.Module):
     def __init__(self, in_features, n_nodes, n_hidden_layers, layer_sizes, layer_class,
-                 activation_func=nn.ReLU(), skip_connection_n=1, normalize=False):
+                 preprocessing_layer=False, activation_func=nn.ReLU(), skip_connection_n=1, normalize=False):
         super().__init__()
         
         # Define network
         if type(layer_sizes) == int:
-            layer_sizes = [layer_sizes] * (n_hidden_layers + 1)
+            layer_sizes = [layer_sizes] * (n_hidden_layers + 1 + preprocessing_layer)
+        elif len(layer_sizes) == 1:
+            layer_sizes = layer_sizes * (n_hidden_layers + 1 + preprocessing_layer)
         if len(layer_sizes) != n_hidden_layers + 1:
-            raise ValueError(f'len(layer_sizes) must equal n_hidden_layers + 1, '
-                             f'was {len(layer_sizes)} but should have been {n_hidden_layers+1}')
-        layers = [layer_class(n_nodes, in_features, layer_sizes[0], activation_func=activation_func)]
+            raise ValueError(f'len(layer_sizes) must equal n_hidden_layers + 1 (+ 1 again if preprocessing_layer), '
+                             f'was {len(layer_sizes)} but should have been {n_hidden_layers+1+preprocessing_layer}')
+        if preprocessing_layer:
+            layers = [nn.Linear(in_features, layer_sizes[0]),
+                      activation_func,
+                      layer_class(n_nodes, layer_sizes[0], layer_sizes[1], activation_func=activation_func)]
+        else:
+            layers = [layer_class(n_nodes, in_features, layer_sizes[0], activation_func=activation_func)]
         for i in range(n_hidden_layers):
-            layers.append(layer_class(n_nodes, layer_sizes[i], layer_sizes[i+1],
+            layers.append(layer_class(n_nodes, layer_sizes[i+preprocessing_layer], layer_sizes[i+1+preprocessing_layer],
                                       activation_func=activation_func, normalize=normalize))
         
         if skip_connection_n == 0:
@@ -216,3 +223,89 @@ class GraphNNActorCritic(nn.Module):
         self.base.detach_hidden_states()
         self.actor.detach_hidden_states()
         self.critic.detach_hidden_states()
+
+
+class GraphNNPolicy(nn.Module):
+    def __init__(self, in_features, n_nodes, n_hidden_layers, layer_sizes, layer_class,
+                 activation_func=nn.ReLU(), skip_connection_n=1, normalize=False):
+        super().__init__()
+
+        # Define network
+        if type(layer_sizes) == int:
+            layer_sizes = [layer_sizes] * (n_hidden_layers + 1)
+        if len(layer_sizes) != n_hidden_layers + 1:
+            raise ValueError(f'len(layer_sizes) must equal n_hidden_layers + 1, '
+                             f'was {len(layer_sizes)} but should have been {n_hidden_layers + 1}')
+        layers = [layer_class(n_nodes, in_features, layer_sizes[0], activation_func=activation_func)]
+        for i in range(n_hidden_layers):
+            layers.append(layer_class(n_nodes, layer_sizes[i], layer_sizes[i + 1],
+                                      activation_func=activation_func, normalize=normalize))
+
+        if skip_connection_n == 0:
+            self.base = nn.Sequential(*layers)
+        else:
+            self.base = GraphNNResidualBase(layers, skip_connection_n)
+        self.actor = layer_class(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
+
+    def forward(self, states):
+        return self.actor(self.base(states))
+
+    def sample_action(self, states, train=False):
+        if train:
+            logits = self.forward(states)
+        else:
+            with torch.no_grad():
+                logits = self.forward(states)
+        probs = F.softmax(logits, dim=-1)
+        seq_len, n_envs, n_players, n_bandits = probs.shape
+        m = distributions.Categorical(probs.view(seq_len * n_envs * n_players, n_bandits))
+        sampled_actions = m.sample().view(seq_len, n_envs, n_players)
+        if train:
+            return sampled_actions, logits
+        else:
+            return sampled_actions
+
+    def choose_best_action(self, states):
+        with torch.no_grad():
+            logits = self.forward(states)
+            return logits.argmax(dim=-1)
+
+
+class GraphNNQ(nn.Module):
+    def __init__(self, in_features, n_nodes, n_hidden_layers, layer_sizes, layer_class,
+                 activation_func=nn.ReLU(), skip_connection_n=1, normalize=False):
+        super().__init__()
+        self.action_space = n_nodes
+        # Define network
+        if type(layer_sizes) == int:
+            layer_sizes = [layer_sizes] * (n_hidden_layers + 1)
+        if len(layer_sizes) != n_hidden_layers + 1:
+            raise ValueError(f'len(layer_sizes) must equal n_hidden_layers + 1, '
+                             f'was {len(layer_sizes)} but should have been {n_hidden_layers + 1}')
+        layers = [layer_class(n_nodes, in_features, layer_sizes[0], activation_func=activation_func)]
+        for i in range(n_hidden_layers):
+            layers.append(layer_class(n_nodes, layer_sizes[i], layer_sizes[i + 1],
+                                      activation_func=activation_func, normalize=normalize))
+
+        if skip_connection_n == 0:
+            self.base = nn.Sequential(*layers)
+        else:
+            self.base = GraphNNResidualBase(layers, skip_connection_n)
+        self.critic = layer_class(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
+
+    def forward(self, states):
+        return self.critic(self.base(states))
+
+    def sample_action_epsilon_greedy(self, states, epsilon):
+        actions = self.choose_best_action(states)
+        actions = torch.where(
+            torch.rand(actions.shape) < epsilon,
+            torch.randint(self.action_space, size=actions.shape),
+            actions
+        )
+        return actions
+
+    def choose_best_action(self, states):
+        with torch.no_grad():
+            q_vals = self.forward(states)
+            return q_vals.argmax(dim=-1)
