@@ -24,19 +24,25 @@ replay_s_a_r_d_s = load_s_a_r_d_s(
 graph_nn_policy_kwargs = dict(
     in_features=4,
     n_nodes=100,
-    n_hidden_layers=8,
-    layer_sizes=[32],
-    layer_class=gnn.SmallFullyConnectedGNNLayer,
+    n_hidden_layers=4,
+    layer_sizes=[20],
+    layer_class=gnn.FullyConnectedGNNLayer,
     #preprocessing_layer=True,
     skip_connection_n=1,
     normalize=True
 )
 graph_nn_q_kwargs = copy.copy(graph_nn_policy_kwargs)
 
+policy_opt_class = torch.optim.SGD
+q_opt_class = torch.optim.SGD
 policy_opt_kwargs = dict(
-    weight_decay=5e-6
+    lr=0.01,
+    #weight_decay=5e-6
 )
-q_opt_kwargs = copy.copy(policy_opt_kwargs)
+#q_opt_kwargs = copy.copy(policy_opt_kwargs)
+q_opt_kwargs = dict(
+    lr=0.1
+)
 
 env_kwargs = dict(
     env_device=DEVICE,
@@ -48,16 +54,17 @@ env_kwargs = dict(
 
 rl_alg_kwargs = dict(
     eta=0.1,
-    starting_epsilon=0.08,
+    starting_epsilon=0.12,
+    epsilon_decay_epoch_multiplier=0.1,
     gamma=0.99,
-    checkpoint_freq=10,
+    checkpoint_freq=30,
     log_params_full=False
 )
 rl_train_kwargs = dict(
-    batch_size=1024,
+    batch_size=2048,
     n_expl_steps_per_epoch=1999,
-    n_train_batches_per_epoch=1999,
-    n_epochs_q_target_update=1
+    n_train_batches_per_epoch=2 * 16,
+    n_epochs_q_target_update=30
 )
 m_rl_circular_kwargs = dict(
     s_shape=(graph_nn_policy_kwargs['n_nodes'], graph_nn_policy_kwargs['in_features']),
@@ -98,8 +105,8 @@ validation_opponent_env_kwargs = [
 policy_models = [gnn.GraphNNPolicy(**graph_nn_policy_kwargs), gnn.GraphNNPolicy(**graph_nn_policy_kwargs)]
 q_models = [gnn.GraphNNQ(**graph_nn_q_kwargs), gnn.GraphNNQ(**graph_nn_q_kwargs)]
 q_target_models = [gnn.GraphNNQ(**graph_nn_q_kwargs), gnn.GraphNNQ(**graph_nn_q_kwargs)]
-policy_opts = [torch.optim.Adam(model.parameters(), **policy_opt_kwargs) for model in policy_models]
-q_opts = [torch.optim.Adam(model.parameters(), **q_opt_kwargs) for model in q_models]
+policy_opts = [policy_opt_class(model.parameters(), **policy_opt_kwargs) for model in policy_models]
+q_opts = [q_opt_class(model.parameters(), **q_opt_kwargs) for model in q_models]
 """
 with open(f'runs/awac/small_8_32_1_norm_v1/585_cp.txt', 'r') as f:
     serialized_string = f.readline()[2:-1].encode()
@@ -128,6 +135,7 @@ awac_alg = NFSPVectorized(policy_models, q_models, q_target_models, m_rl_circula
                           policy_opts=policy_opts, q_opts=q_opts,
                           validation_env_kwargs_dicts=validation_env_kwargs_dicts,
                           device=DEVICE,
+                          clip_grads=10.,
                           exp_folder=Path(f'runs/nfsp/{folder_name}'),
                           **rl_alg_kwargs)
 this_script = Path(__file__).absolute()
@@ -137,7 +145,7 @@ env_kwargs['n_envs'] = 16
 try:
     awac_alg.train(
         ve.KaggleMABEnvTorchVectorized(**env_kwargs),
-        n_epochs=1000,
+        n_epochs=10000,
         **rl_train_kwargs
     )
 except KeyboardInterrupt:

@@ -19,9 +19,10 @@ import vectorized_env as ve
 class NFSPVectorized:
     def __init__(self, policy_models, q_models, q_target_models, m_rl_kwargs, m_sl_kwargs,
                  policy_opts=None, q_opts=None,
-                 eta=0.1, starting_epsilon=0.08, gamma=0.99,
+                 eta=0.1, starting_epsilon=0.12, epsilon_decay_epoch_multiplier=0.5, gamma=0.99,
                  validation_env_kwargs_dicts=(),
                  device=torch.device('cuda'),
+                 clip_grads=10.,
                  exp_folder=Path('runs/nfsp/TEMP'),
                  checkpoint_freq=10,
                  log_params_full=False):
@@ -50,10 +51,12 @@ class NFSPVectorized:
                     q_target_models[i],
                     q_opts[i],
                     eta=eta,
-                    device=device
+                    device=device,
+                    clip_grads=clip_grads
                 )
             )
         self.starting_epsilon = starting_epsilon
+        self.epsilon_decay_epoch_multiplier = epsilon_decay_epoch_multiplier
         self.gamma = gamma
         self.validation_env_kwargs_dicts = validation_env_kwargs_dicts
         opponent_names = []
@@ -118,13 +121,24 @@ class NFSPVectorized:
                 for agent in self.nfsp_agents:
                     agent.update_q_target()
             print(f'Sampling {n_expl_steps_per_epoch} time-steps from the environment')
+            self.overall_summary_writer.add_scalar(
+                'Episode/e_greedy_epsilon',
+                self.starting_epsilon / max(
+                    math.sqrt(self.epoch_counter * self.epsilon_decay_epoch_multiplier),
+                    1.
+                ),
+                self.epoch_counter
+            )
             episode_reward_sums = r
             for step in tqdm.trange(n_expl_steps_per_epoch):
                 start_time = time.time()
                 a = torch.cat([
                     agent.sample_action(
                         player_s,
-                        epsilon=self.starting_epsilon / max(math.sqrt(self.epoch_counter), 1.)
+                        epsilon=self.starting_epsilon / max(
+                            math.sqrt(self.epoch_counter * self.epsilon_decay_epoch_multiplier),
+                            1.
+                        )
                     ) for agent, player_s in zip(self.nfsp_agents, s.to(device=self.device).chunk(2, dim=1))
                 ], dim=1)
                 next_s, r, done, info_dict = self.env.step(a)
@@ -396,7 +410,7 @@ class NFSPTrainAgent:
     def __init__(self, m_rl, m_sl,
                  policy_model, policy_opt,
                  q_model, q_target_model, q_opt,
-                 eta, device):
+                 eta, device, clip_grads):
         self.m_rl = m_rl
         self.m_sl = m_sl
         self.policy = policy_model
@@ -407,8 +421,19 @@ class NFSPTrainAgent:
         self.q_opt = q_opt
         self.eta = eta
         self.device = device
+        self.clip_grads = clip_grads
 
         self.e_greedy_policy = None
+        if self.clip_grads is not None:
+            if self.clip_grads <= 0:
+                raise ValueError(f'Should not clip gradients to <= 0, was {self.clip_grads} - '
+                                 'pass None to clip_grads to not clip gradients')
+            for p in self.policy.parameters():
+                if p.requires_grad:
+                    p.register_hook(lambda grad: torch.clamp(grad, -self.clip_grads, self.clip_grads))
+            for p in self.q.parameters():
+                if p.requires_grad:
+                    p.register_hook(lambda grad: torch.clamp(grad, -self.clip_grads, self.clip_grads))
 
     def new_episode(self, n_envs):
         self.e_greedy_policy = torch.rand(n_envs, device=self.device) < self.eta
