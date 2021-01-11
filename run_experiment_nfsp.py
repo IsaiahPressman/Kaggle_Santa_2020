@@ -7,7 +7,7 @@ import shutil
 import torch
 
 # Custom imports
-from nfsp import NFSPVectorized, CircularReplayBuffer, ReservoirReplayBuffer
+from nfsp import NFSPVectorized
 import graph_nns as gnn
 from replays_to_database import load_s_a_r_d_s
 import vectorized_env as ve
@@ -24,9 +24,9 @@ replay_s_a_r_d_s = load_s_a_r_d_s(
 graph_nn_policy_kwargs = dict(
     in_features=4,
     n_nodes=100,
-    n_hidden_layers=4,
-    layer_sizes=[20],
-    layer_class=gnn.FullyConnectedGNNLayer,
+    n_hidden_layers=8,
+    layer_sizes=[32],
+    layer_class=gnn.SmallFullyConnectedGNNLayer,
     #preprocessing_layer=True,
     skip_connection_n=1,
     normalize=True
@@ -34,7 +34,7 @@ graph_nn_policy_kwargs = dict(
 graph_nn_q_kwargs = copy.copy(graph_nn_policy_kwargs)
 
 policy_opt_kwargs = dict(
-    # weight_decay=5e-6
+    weight_decay=5e-6
 )
 q_opt_kwargs = copy.copy(policy_opt_kwargs)
 
@@ -122,13 +122,13 @@ is_small = 'small_' if graph_nn_policy_kwargs['layer_class'] == gnn.SmallFullyCo
 with_preprocessing = ''
 is_normalized = 'norm_' if graph_nn_policy_kwargs['normalize'] else ''
 folder_name = f"{with_preprocessing}{is_small}{graph_nn_policy_kwargs['n_hidden_layers']}_" \
-              f"{'_'.join(np.flip(np.sort(graph_nn_policy_kwargs['layer_sizes'])).astype(str))}_" \
+              f"{'_'.join(np.flip(np.sort(np.unique(graph_nn_policy_kwargs['layer_sizes']))).astype(str))}_" \
               f"{graph_nn_policy_kwargs['skip_connection_n']}_{is_normalized}v1"
 awac_alg = NFSPVectorized(policy_models, q_models, q_target_models, m_rl_circular_kwargs, m_sl_reservoir_kwargs,
                           policy_opts=policy_opts, q_opts=q_opts,
                           validation_env_kwargs_dicts=validation_env_kwargs_dicts,
                           device=DEVICE,
-                          #exp_folder=Path(f'runs/nfsp/{folder_name}'),
+                          exp_folder=Path(f'runs/nfsp/{folder_name}'),
                           **rl_alg_kwargs)
 this_script = Path(__file__).absolute()
 shutil.copy(this_script, awac_alg.exp_folder / f'_{this_script.name}')
