@@ -311,7 +311,7 @@ class NFSPVectorized:
         for validation_agent_idx, validation_agent in enumerate(self.nfsp_agents):
             validation_agent.eval()
             if len(self.validation_env_kwargs_dicts) > 0:
-                print(f'Validating agent {validation_agent_idx} performance in '
+                print(f'Validating agent.{validation_agent_idx} average policy and q performance in '
                       f'{len(self.validation_env_kwargs_dicts)} environments')
                 episode_reward_sums = []
                 final_info_dicts = []
