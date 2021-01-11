@@ -16,6 +16,7 @@ import vectorized_agents as va
 
 DEVICE = torch.device('cuda')
 OBS_NORM = 100. / 1999.
+
 replay_s_a_r_d_s = load_s_a_r_d_s(
     'episode_scraping/latest_250_replays_database_SUMMED_OBS_WITH_TIMESTEP/'
 )
@@ -60,13 +61,13 @@ rl_train_kwargs = dict(
 )
 m_rl_circular_kwargs = dict(
     s_shape=(graph_nn_policy_kwargs['n_nodes'], graph_nn_policy_kwargs['in_features']),
-    max_len=5e5,
+    max_len=4e5,
     starting_s_a_r_d_s=None
     #starting_s_a_r_d_s=replay_s_a_r_d_s
 )
 m_sl_reservoir_kwargs = dict(
     s_shape=(graph_nn_policy_kwargs['n_nodes'], graph_nn_policy_kwargs['in_features']),
-    max_len=1e6,
+    max_len=2e6,
 )
 
 validation_env_kwargs_base = dict(
@@ -84,14 +85,14 @@ validation_opponent_env_kwargs = [
         opponent=va.PullVegasSlotMachines(OBS_NORM),
         opponent_obs_type=ve.SUMMED_OBS
     ),
-    #dict(
-    #    opponent=va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE, deterministic_policy=True),
-    #    opponent_obs_type=ve.SUMMED_OBS
-    #),
     dict(
-        opponent=va.SavedRLAgent('awac_agent_4_20_1_norm_v1-215', device=DEVICE, deterministic_policy=True),
-        opponent_obs_type=ve.SUMMED_OBS_WITH_TIMESTEP
-    )
+        opponent=va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE, deterministic_policy=True),
+        opponent_obs_type=ve.SUMMED_OBS
+    ),
+    #dict(
+    #    opponent=va.SavedRLAgent('awac_agent_4_20_1_norm_v1-215', device=DEVICE, deterministic_policy=True),
+    #    opponent_obs_type=ve.SUMMED_OBS_WITH_TIMESTEP
+    #)
 ]
 
 policy_models = [gnn.GraphNNPolicy(**graph_nn_policy_kwargs), gnn.GraphNNPolicy(**graph_nn_policy_kwargs)]
@@ -108,7 +109,8 @@ model.load_state_dict(loaded_state_dicts['model_state_dict'])
 """
 for model in policy_models + q_models + q_target_models:
     model.to(device=DEVICE)
-
+# Conserves memory when replay_s_a_r_d_s is not being used
+del replay_s_a_r_d_s
 
 validation_env_kwargs_dicts = []
 for opponent_kwargs in validation_opponent_env_kwargs:
