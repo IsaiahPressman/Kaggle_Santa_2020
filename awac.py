@@ -100,7 +100,7 @@ class AWACVectorized:
                     next_s.view(-1, *next_s.shape[-2:]).cpu().clone()
                 )
                 self.summary_writer.add_scalar(f'DEBUG/replay_buffer_size',
-                                               self.replay_buffer.current_size,
+                                               len(self.replay_buffer),
                                                self.train_step_counter)
                 self.summary_writer.add_scalar(f'DEBUG/replay_buffer__top',
                                                self.replay_buffer._top,
@@ -310,7 +310,7 @@ class AWACVectorized:
 
 
 class ReplayBuffer:
-    def __init__(self, s_shape, max_len=1e6, starting_s_a_r_d_s=None, freeze_starting_buffer=False):
+    def __init__(self, s_shape, max_len=1e6, starting_s_a_r_d_s=None):
         self.max_len = int(max_len)
         self._s_buffer = torch.zeros(self.max_len, *s_shape)
         self._a_buffer = torch.zeros(self.max_len)
@@ -319,7 +319,6 @@ class ReplayBuffer:
         self._next_s_buffer = torch.zeros(self.max_len, *s_shape)
         self.current_size = 0
         self._top = 0
-        self._min_top = 0
         if starting_s_a_r_d_s is not None:
             self.append_samples_batch(*starting_s_a_r_d_s)
             # Randomly shuffle initial experiences
@@ -332,15 +331,9 @@ class ReplayBuffer:
             self._d_buffer = self._d_buffer[torch.from_numpy(shuffled_idxs)]
             self._next_s_buffer = self._next_s_buffer[torch.from_numpy(shuffled_idxs)]
 
-        if freeze_starting_buffer:
-            if self.current_size >= max_len / 2.:
-                raise ValueError('It is not recommended that >= 1/2 the buffer be kept/frozen forever')
-            else:
-                self._min_top = self.current_size
-
     def get_samples_batch(self, sample_size):
         # Sampling with replacement
-        idxs = np.random.randint(self.current_size, size=(sample_size,))
+        idxs = torch.randint(self.current_size, size=(sample_size,))
         # Sampling without replacement is possible, but quite a bit slower:
         # idxs = np.random.choice(self.current_size, size=sample_size, replace=(self.current_size < sample_size))
         return (self._s_buffer[idxs],
@@ -362,10 +355,7 @@ class ReplayBuffer:
             self._r_buffer[self._top:new_len] = r_batch
             self._d_buffer[self._top:new_len] = d_batch
             self._next_s_buffer[self._top:new_len] = next_s_batch
-            if new_len == self.max_len:
-                self._top = self._min_top
-            else:
-                self._top = new_len
+            self._top = new_len % self.max_len
             self.current_size = max(new_len, self.current_size)
         else:
             leftover_batch = new_len % self.max_len
@@ -384,3 +374,6 @@ class ReplayBuffer:
                                       r_batch_split[1],
                                       d_batch_split[1],
                                       next_s_batch_split[1])
+
+    def __len__(self):
+        return self.current_size

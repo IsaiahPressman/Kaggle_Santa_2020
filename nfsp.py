@@ -23,7 +23,8 @@ class NFSPVectorized:
                  validation_env_kwargs_dicts=(),
                  device=torch.device('cuda'),
                  exp_folder=Path('runs/nfsp/TEMP'),
-                 checkpoint_freq=5):
+                 checkpoint_freq=10,
+                 log_params_full=False):
         assert len(policy_models) == 2
         assert len(q_models) == 2
         assert len(q_target_models) == 2
@@ -41,8 +42,8 @@ class NFSPVectorized:
         for i in range(2):
             self.nfsp_agents.append(
                 NFSPTrainAgent(
-                    CircularReplayBuffer(m_rl_kwargs),
-                    ReservoirReplayBuffer(m_sl_kwargs),
+                    CircularReplayBuffer(**m_rl_kwargs),
+                    ReservoirReplayBuffer(**m_sl_kwargs),
                     policy_models[i],
                     policy_opts[i],
                     q_models[i],
@@ -70,9 +71,9 @@ class NFSPVectorized:
             raise ValueError(f'Duplicate opponents encountered in validation_env_kwargs_dicts : {opponent_names}')
         self.device = device
         self.exp_folder = exp_folder.absolute()
-        if str(self.exp_folder) in ('/Windows/Users/isaia/Documents/GitHub/Kaggle/Santa_2020/runs/awac/TEMP',
-                                    '/home/pressmi/github_misc/Kaggle_Santa_2020/runs/awac/TEMP'):
-            print('WARNING: Using TEMP exp_folder')
+        if str(self.exp_folder) in ('/Windows/Users/isaia/Documents/GitHub/Kaggle/Santa_2020/runs/nfsp/TEMP',
+                                    '/home/pressmi/github_misc/Kaggle_Santa_2020/runs/nfsp/TEMP'):
+            print('\nWARNING: Using TEMP exp_folder')
             if self.exp_folder.exists():
                 shutil.rmtree(self.exp_folder)
         elif self.exp_folder.exists() and any(Path(self.exp_folder).iterdir()):
@@ -81,6 +82,7 @@ class NFSPVectorized:
             print(f'Saving results to {self.exp_folder}')
         self.exp_folder.mkdir(exist_ok=True)
         self.checkpoint_freq = checkpoint_freq
+        self.log_params_full = log_params_full
 
         self.env = None
         self.epoch_counter = 0
@@ -94,7 +96,7 @@ class NFSPVectorized:
     def new_episode(self):
         for agent in self.nfsp_agents:
             agent.eval()
-            agent.new_episode()
+            agent.new_episode(self.env.n_envs)
         return self.env.reset()
 
     def train(self, env, batch_size, n_epochs, n_expl_steps_per_epoch, n_train_batches_per_epoch,
@@ -104,6 +106,7 @@ class NFSPVectorized:
 
         print(f'\nRunning main training loop with {n_epochs} epochs')
         for epoch in range(n_epochs):
+            epoch_start_time = time.time()
             print(f'Epoch #{epoch}:')
             if self.epoch_counter % n_epochs_q_target_update == 0:
                 for agent in self.nfsp_agents:
@@ -116,11 +119,11 @@ class NFSPVectorized:
                 a = torch.cat([
                     agent.sample_action(
                         player_s,
-                        epsilon=self.starting_epsilon / math.sqrt(self.epoch_counter)
+                        epsilon=self.starting_epsilon / max(math.sqrt(self.epoch_counter), 1.)
                     ) for agent, player_s in zip(self.nfsp_agents, s.to(device=self.device).chunk(2, dim=1))
                 ], dim=1)
                 next_s, r, done, info_dict = self.env.step(a)
-                d_tensor = torch.ones(r.shape).view(-1) if done else torch.zeros(r.shape).view(-1)
+                d_tensor = torch.ones(r.shape) if done else torch.zeros(r.shape)
                 for agent, player_s, player_a, player_r, player_d, player_next_s in zip(
                     self.nfsp_agents,
                     s.chunk(2, dim=1),
@@ -133,14 +136,14 @@ class NFSPVectorized:
                         player_s.view(-1, *s.shape[-2:]),
                         player_a.view(-1).detach(),
                         player_r.view(-1),
-                        player_d,
+                        player_d.view(-1),
                         player_next_s.view(-1, *next_s.shape[-2:])
                     )
                 s = next_s
                 episode_reward_sums += r
                 if done:
                     self.log_train_episode(
-                        episode_reward_sums.mean().cpu().clone() / self.env.r_norm,
+                        episode_reward_sums.mean(dim=0).cpu().clone() / self.env.r_norm,
                         info_dict
                     )
                     self.episode_counter += 1
@@ -153,14 +156,15 @@ class NFSPVectorized:
 
             for agent in self.nfsp_agents:
                 agent.train()
+            self.batch_counter += n_train_batches_per_epoch
             print(f'Training policies on {n_train_batches_per_epoch} batches from the replay buffer')
             for i, agent in enumerate(self.nfsp_agents):
                 losses, step_times = agent.train_policy(batch_size, n_train_batches_per_epoch)
-                self.log_train_batches(f'agent{i}_policy', losses, step_times)
+                self.log_train_batches(f'agent.{i}_policy', losses, step_times)
             print(f'Training Q-networks on {n_train_batches_per_epoch} batches from the replay buffer')
             for i, agent in enumerate(self.nfsp_agents):
                 losses, step_times = agent.train_q(batch_size, n_train_batches_per_epoch, self.gamma)
-                self.log_train_batches(f'agent{i}_q', losses, step_times)
+                self.log_train_batches(f'agent.{i}_q', losses, step_times)
 
             self.log_epoch()
             self.epoch_counter += 1
@@ -168,68 +172,99 @@ class NFSPVectorized:
                 self.run_validation()
                 self.save()
             print()
+            self.summary_writer.add_scalar('time/epoch_time_minutes',
+                                           (time.time() - epoch_start_time) / 60.,
+                                           self.epoch_counter - 1)
         self.save(finished=True)
 
     def log_train_batches(self, agent_name, losses, step_times):
         for i, loss, step_time in zip(range(len(losses)), losses, step_times):
             self.summary_writer.add_scalar(f'batch/{agent_name}_loss', loss.numpy().item(),
                                            self.batch_counter - len(losses) + i)
-            self.summary_writer.add_scalar(f'time/{agent_name}_step_time_ms', step_time * 1000,
+            self.summary_writer.add_scalar(f'time/{agent_name}_train_step_time_ms', step_time * 1000,
                                            self.batch_counter - len(losses) + i)
 
     def log_train_episode(self, episode_reward_sums, final_info_dict):
-        self.summary_writer.add_scalar(f'episode/reward_{self.env.reward_type}',
-                                       episode_reward_sums.numpy().item(),
-                                       self.episode_counter)
         pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)
         self.summary_writer.add_histogram(
-            'episode/average_pull_rewards',
+            'episode/overall_pull_rewards',
             pull_rewards_sum,
             self.episode_counter
         )
-        self.summary_writer.add_histogram(
-            'episode/agent1_pull_rewards',
-            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].numpy(),
-            self.episode_counter
-        )
-        self.summary_writer.add_histogram(
-            'episode/agent2_pull_rewards',
-            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 1].numpy(),
-            self.episode_counter
-        )
         self.summary_writer.add_scalar(
-            'episode/mean_agent_pull_rewards',
+            'episode/mean_overall_agent_pull_rewards',
             pull_rewards_sum.mean().numpy().item(),
             self.episode_counter
         )
-        self.summary_writer.add_scalar(
-            'episode/mean_agent1_pull_rewards',
-            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].mean().numpy().item(),
-            self.episode_counter
-        )
-        self.summary_writer.add_scalar(
-            'episode/mean_agent2_pull_rewards',
-            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 1].mean().numpy().item(),
-            self.episode_counter
-        )
+        for agent_idx in range(len(self.nfsp_agents)):
+            self.summary_writer.add_scalar(
+                f'episode/reward_agent.{agent_idx}_{self.env.reward_type}',
+                episode_reward_sums[agent_idx].numpy().item(),
+                self.episode_counter)
+            self.summary_writer.add_histogram(
+                f'episode/agent.{agent_idx}_pull_rewards',
+                final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, agent_idx].numpy(),
+                self.episode_counter
+            )
+            self.summary_writer.add_scalar(
+                f'episode/mean_agent.{agent_idx}_pull_rewards',
+                final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, agent_idx].mean().numpy().item(),
+                self.episode_counter
+            )
 
     def log_epoch(self):
         for i, model in enumerate([agent.policy for agent in self.nfsp_agents]):
             for name, param in model.named_parameters():
                 if param.requires_grad:
-                    self.summary_writer.add_histogram(
-                        f'params/agent{i}.policy.{name}',
-                        param.detach().cpu().clone().numpy(),
+                    self.summary_writer.add_scalar(
+                        f'params/agent.{i}.policy.{name}_mean_magnitude',
+                        param.detach().cpu().clone().abs().mean().numpy().item(),
                         self.epoch_counter
                     )
+                    if param.view(-1).shape[0] > 1:
+                        self.summary_writer.add_scalar(
+                            f'params/agent.{i}.policy.{name}_standard_deviation',
+                            param.detach().cpu().clone().std().numpy().item(),
+                            self.epoch_counter
+                        )
+                    else:
+                        self.summary_writer.add_scalar(
+                            f'params/agent.{i}.policy.{name}_standard_deviation',
+                            0.,
+                            self.epoch_counter
+                        )
+                    if self.log_params_full:
+                        self.summary_writer.add_histogram(
+                            f'params/agent.{i}.policy.{name}',
+                            param.detach().cpu().clone().numpy(),
+                            self.epoch_counter
+                        )
         for i, model in enumerate([agent.q for agent in self.nfsp_agents]):
             for name, param in model.named_parameters():
                 if param.requires_grad:
-                    self.summary_writer.add_histogram(
-                        f'params/agent{i}.policy.{name}',
-                        param.detach().cpu().clone().numpy(),
+                    self.summary_writer.add_scalar(
+                        f'params/agent.{i}.q.{name}_mean_magnitude',
+                        param.detach().cpu().clone().abs().mean().numpy().item(),
                         self.epoch_counter
                     )
+                    if param.view(-1).shape[0] > 1:
+                        self.summary_writer.add_scalar(
+                            f'params/agent.{i}.q.{name}_standard_deviation',
+                            param.detach().cpu().clone().std().numpy().item(),
+                            self.epoch_counter
+                        )
+                    else:
+                        self.summary_writer.add_scalar(
+                            f'params/agent.{i}.q.{name}_standard_deviation',
+                            0.,
+                            self.epoch_counter
+                        )
+                    if self.log_params_full:
+                        self.summary_writer.add_histogram(
+                            f'params/agent.{i}.q.{name}',
+                            param.detach().cpu().clone().numpy(),
+                            self.epoch_counter
+                        )
 
     def log_validation_episodes(self, agent_name, episode_reward_sums, final_info_dicts):
         assert len(episode_reward_sums) == len(final_info_dicts)
@@ -272,12 +307,12 @@ class NFSPVectorized:
                 self.validation_counter
             )
 
-    def run_validation(self, validation_agent_idx):
-
+    def run_validation(self):
         for validation_agent_idx, validation_agent in enumerate(self.nfsp_agents):
             validation_agent.eval()
             if len(self.validation_env_kwargs_dicts) > 0:
-                print(f'Validating model performance in {len(self.validation_env_kwargs_dicts)} environments')
+                print(f'Validating agent {validation_agent_idx} performance in '
+                      f'{len(self.validation_env_kwargs_dicts)} environments')
                 episode_reward_sums = []
                 final_info_dicts = []
                 for i in tqdm.trange(len(self.validation_env_kwargs_dicts)):
@@ -298,7 +333,7 @@ class NFSPVectorized:
                     episode_reward_sums[-1] = episode_reward_sums[-1].mean(dim=-1).cpu().clone() / val_env.r_norm
                     final_info_dicts.append(info_dict)
                 self.log_validation_episodes(
-                    f'agent{validation_agent_idx}_policy',
+                    f'agent.{validation_agent_idx}_policy',
                     episode_reward_sums,
                     final_info_dicts
                 )
@@ -323,7 +358,7 @@ class NFSPVectorized:
                     episode_reward_sums[-1] = episode_reward_sums[-1].mean(dim=-1).cpu().clone() / val_env.r_norm
                     final_info_dicts.append(info_dict)
                 self.log_validation_episodes(
-                    f'agent{validation_agent_idx}_q',
+                    f'agent.{validation_agent_idx}_q',
                     episode_reward_sums,
                     final_info_dicts
                 )
@@ -355,16 +390,15 @@ class NFSPTrainAgent:
         self.device = device
 
         self.e_greedy_policy = None
-        self.new_episode()
 
-    def new_episode(self, n_envs=1):
-        self.e_greedy_policy = torch.rand(n_envs) < self.eta
+    def new_episode(self, n_envs):
+        self.e_greedy_policy = torch.rand(n_envs, device=self.device) < self.eta
 
     def sample_action(self, states, epsilon):
         greedy_actions = self.get_q_action(states, epsilon)
         mixed_strategy = self.get_policy_action(states)
         return torch.where(
-            self.e_greedy_policy,
+            self.e_greedy_policy.unsqueeze(1),
             greedy_actions,
             mixed_strategy
         )
@@ -382,12 +416,7 @@ class NFSPTrainAgent:
         d = d.cpu().clone()
         next_s = next_s.cpu().clone()
         self.m_rl.append_samples_batch(s, a, r, d, next_s)
-        self.m_sl.append_samples_batch(
-            s[self.e_greedy_policy],
-            a[self.e_greedy_policy],
-            r[self.e_greedy_policy],
-            d[self.e_greedy_policy],
-            next_s[self.e_greedy_policy])
+        self.m_sl.append_samples_batch(s[self.e_greedy_policy], a[self.e_greedy_policy])
 
     def train_policy(self, batch_size, n_batches):
         losses = []
@@ -396,7 +425,8 @@ class NFSPTrainAgent:
             start_time = time.time()
             s_batch, a_batch = self.m_sl.sample(batch_size)
             logits = self.policy(s_batch.to(device=self.device))
-            log_probs = distributions.Categorical(F.softmax(logits, dim=-1)).log_prob(a_batch.view(-1))
+            m = distributions.Categorical(F.softmax(logits, dim=-1))
+            log_probs = m.log_prob(a_batch.to(device=self.device).view(-1))
             loss = -log_probs.mean()
 
             self.policy_opt.zero_grad()
@@ -418,12 +448,12 @@ class NFSPTrainAgent:
             r_batch = r_batch.to(device=self.device)
             d_batch = d_batch.to(device=self.device)
             next_s_batch = next_s_batch.to(device=self.device)
-            q_values = self.q(s_batch.to(device=self.device)).gather(1, a_batch.unsqueeze(1))
-            v_next_s = self.q_target(next_s_batch.to(device=self.device)).max(dim=-1)
+            q_values = self.q(s_batch.to(device=self.device)).gather(1, a_batch.unsqueeze(1).long())
+            v_next_s = self.q_target(next_s_batch.to(device=self.device)).max(dim=-1)[0]
             # Reward of 0 for terminal states
             v_next_s = (r_batch + gamma * v_next_s * (1. - d_batch))
             # Huber loss for critic
-            loss = F.smooth_l1_loss(q_values, v_next_s.detach(), reduction='none').mean()
+            loss = F.smooth_l1_loss(q_values.view(-1), v_next_s.detach().view(-1))
 
             self.q_opt.zero_grad()
             loss.backward()
@@ -434,7 +464,7 @@ class NFSPTrainAgent:
         return losses, step_times
 
     def update_q_target(self):
-        self.q_target.load_state_dict(self.q)
+        self.q_target.load_state_dict(self.q.state_dict())
 
     def save(self, policy_file_path, q_file_path, current_device):
         assert policy_file_path != q_file_path
@@ -545,7 +575,7 @@ class ReservoirReplayBuffer:
 
     def sample(self, sample_size):
         if self.current_size <= sample_size:
-            return self._s_buffer, self._a_buffer
+            return self._s_buffer[:self.current_size], self._a_buffer[:self.current_size]
         else:
             # Efficient Reservoir Sampling
             # http://erikerlandson.github.io/blog/2015/11/20/very-fast-reservoir-sampling/

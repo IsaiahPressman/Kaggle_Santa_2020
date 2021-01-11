@@ -191,7 +191,6 @@ class KaggleMABEnvTorchVectorized:
             actions.view(-1)
         ] += pull_rewards.view(-1)
         
-        # Return (obs, reward, done) tuple
         if self.reward_type == EVERY_STEP_TRUE:
             rewards = pull_rewards
         elif self.reward_type == EVERY_STEP_EV:

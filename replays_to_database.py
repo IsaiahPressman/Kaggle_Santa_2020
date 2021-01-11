@@ -144,8 +144,8 @@ def load_s_a_r_d_s(replay_database_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='Process a list of JSON replay files and create .pt files to easily load into awac.ReplayBuffer. '
-                    'The output is less space-efficient, but much faster to load.'
+        description='Process a list of JSON replay files and create .pt files to easily load into '
+                    'awac.ReplayBuffer. The output is less disk-efficient, but much faster to load.'
     )
     parser.add_argument(
         'save_dir',
@@ -160,7 +160,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '-b',
-        '--batch_size',
+        '--sample_size',
         type=int,
         default=50,
         help='The batch size to use for batched replay file processing. Default: 50'

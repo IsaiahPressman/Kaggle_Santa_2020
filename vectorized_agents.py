@@ -10,7 +10,7 @@ import graph_nns as gnn
 import vectorized_env as ve
 
 
-def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, *env_args, **env_kwargs):
+def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, **env_kwargs):
     env_kwargs = copy(env_kwargs)
     assert 'opponent' not in env_kwargs.keys(), 'Pass opponent as p2 arg, not as opponent kwarg'
     if 'obs_type' not in env_kwargs.keys():
@@ -28,7 +28,7 @@ def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, *env_args, **env_kwarg
         except AttributeError:
             pass
 
-    vs_env = ve.KaggleMABEnvTorchVectorized(*env_args, opponent=p2, **env_kwargs)
+    vs_env = ve.KaggleMABEnvTorchVectorized(opponent=p2, **env_kwargs)
     s, _, _, _ = vs_env.reset()
     for i in tqdm.trange(vs_env.n_steps):
         s, _, _, _ = vs_env.step(p1(s))
@@ -123,6 +123,83 @@ class PullVegasSlotMachines(VectorizedAgent):
             ev = (wins - losses + opp_pulls - (opp_pulls>0)*1.5) / (wins + losses + opp_pulls)
             actions = ev.squeeze(-1).argmax(dim=-1)
         return actions
+
+
+class PullVegasSlotMachinesImproved(VectorizedAgent):
+    def __init__(self, n_bandits=100):
+        super().__init__()
+        self.n_bandits = n_bandits
+        self.name = 'PullVegasSlotMachinesImproved'
+        self.obs_type = ve.LAST_STEP_OBS
+
+        self.wins = None
+        self.losses = None
+        self.opp_pulls = None
+        self.opp_last_action = None
+        self.opp_continues = None
+        self.my_actions_list = []
+
+    def __call__(self, states):
+        assert states.shape[-2:] == (self.n_bandits, 3)
+        my_pull, opp_pull, win = states.chunk(3, dim=-1)
+        my_pull = my_pull.squeeze(-1)
+        opp_pull = opp_pull.squeeze(-1)
+        win = win.squeeze(-1)
+        if self.wins is None:
+            self.wins = torch.ones_like(win)
+            self.losses = torch.zeros_like(win)
+            self.opp_pulls = torch.zeros_like(win)
+            self.opp_last_action = torch.zeros_like(win)
+            self.opp_continues = torch.zeros_like(win)
+        else:
+            self.wins[..., my_pull == 1] += win[..., my_pull == 1]
+            self.losses[..., my_pull == 1] += 1. - win[..., my_pull == 1]
+            self.opp_pulls += opp_pull
+            if len(self.my_actions_list) >= 2:
+                self.opp_continues = torch.where(
+                    opp_pull == self.opp_last_action,
+                    self.opp_continues + 1.,
+                    torch.zeros_like(self.opp_continues)
+                )
+
+        print(my_pull.shape)
+        win = win[..., my_pull[0] == 1]
+        next_bandits = self.get_next_bandit()
+        if len(self.my_actions_list) == 0:
+            actions = next_bandits
+        elif len(self.my_actions_list) < 3:
+            actions = torch.where(
+                win == 1,
+                self.my_actions_list[-1],
+                next_bandits
+            )
+        else:
+            actions_if_three_in_a_row = torch.where(
+                (self.my_actions_list[-1] == self.my_actions_list[-2]) & (
+                            self.my_actions_list[-1] == self.my_actions_list[-3]),
+                torch.where(
+                    torch.rand(next_bandits.shape) < 0.5,
+                    self.my_actions_list[-1],
+                    next_bandits
+                ),
+                next_bandits
+            )
+            actions = torch.where(
+                win == 1,
+                self.my_actions_list[-1],
+                actions_if_three_in_a_row
+            )
+
+        self.my_actions_list.append(actions)
+        self.opp_last_action = opp_pull.clone()
+        print(next_bandits.shape, win.shape, actions.shape)
+        return actions
+
+    def get_next_bandit(self):
+        ev = (self.wins - self.losses + self.opp_pulls - (self.opp_pulls>0)*1.5 + self.opp_continues) \
+            / (self.wins + self.losses + self.opp_pulls) \
+            * torch.pow(0.97, self.wins + self.losses + self.opp_pulls)
+        return ev.argmax(dim=-1)
 
     
 class RandomAgent(VectorizedAgent):

@@ -233,6 +233,8 @@ class GraphNNPolicy(nn.Module):
         # Define network
         if type(layer_sizes) == int:
             layer_sizes = [layer_sizes] * (n_hidden_layers + 1)
+        elif len(layer_sizes) == 1:
+            layer_sizes = layer_sizes * (n_hidden_layers + 1)
         if len(layer_sizes) != n_hidden_layers + 1:
             raise ValueError(f'len(layer_sizes) must equal n_hidden_layers + 1, '
                              f'was {len(layer_sizes)} but should have been {n_hidden_layers + 1}')
@@ -257,9 +259,9 @@ class GraphNNPolicy(nn.Module):
             with torch.no_grad():
                 logits = self.forward(states)
         probs = F.softmax(logits, dim=-1)
-        seq_len, n_envs, n_players, n_bandits = probs.shape
-        m = distributions.Categorical(probs.view(seq_len * n_envs * n_players, n_bandits))
-        sampled_actions = m.sample().view(seq_len, n_envs, n_players)
+        probs_shape = probs.shape
+        m = distributions.Categorical(probs.view(torch.prod(torch.tensor(probs_shape[:-1])).item(), probs_shape[-1]))
+        sampled_actions = m.sample().view(probs_shape[:-1])
         if train:
             return sampled_actions, logits
         else:
@@ -279,6 +281,8 @@ class GraphNNQ(nn.Module):
         # Define network
         if type(layer_sizes) == int:
             layer_sizes = [layer_sizes] * (n_hidden_layers + 1)
+        elif len(layer_sizes) == 1:
+            layer_sizes = layer_sizes * (n_hidden_layers + 1)
         if len(layer_sizes) != n_hidden_layers + 1:
             raise ValueError(f'len(layer_sizes) must equal n_hidden_layers + 1, '
                              f'was {len(layer_sizes)} but should have been {n_hidden_layers + 1}')
@@ -299,8 +303,8 @@ class GraphNNQ(nn.Module):
     def sample_action_epsilon_greedy(self, states, epsilon):
         actions = self.choose_best_action(states)
         actions = torch.where(
-            torch.rand(actions.shape) < epsilon,
-            torch.randint(self.action_space, size=actions.shape),
+            torch.rand(actions.shape, device=actions.device) < epsilon,
+            torch.randint(self.action_space, size=actions.shape, device=actions.device),
             actions
         )
         return actions
