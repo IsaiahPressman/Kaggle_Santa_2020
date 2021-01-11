@@ -57,24 +57,28 @@ rl_alg_kwargs = dict(
     starting_epsilon=0.12,
     epsilon_decay_epoch_multiplier=0.1,
     gamma=0.99,
+    shared_agent_models=True,
     checkpoint_freq=30,
     log_params_full=False
 )
 rl_train_kwargs = dict(
-    batch_size=2048,
+    batch_size=512,
     n_expl_steps_per_epoch=1999,
-    n_train_batches_per_epoch=2 * 16,
-    n_epochs_q_target_update=30
+    n_train_batches_per_epoch=2 * 16 * 4,
+    n_epochs_q_target_update=10,
+    n_pretrain_batches=1000
 )
 m_rl_circular_kwargs = dict(
     s_shape=(graph_nn_policy_kwargs['n_nodes'], graph_nn_policy_kwargs['in_features']),
     max_len=4e5,
-    starting_s_a_r_d_s=None
-    #starting_s_a_r_d_s=replay_s_a_r_d_s
+    #starting_s_a_r_d_s=None
+    starting_s_a_r_d_s=replay_s_a_r_d_s
 )
 m_sl_reservoir_kwargs = dict(
     s_shape=(graph_nn_policy_kwargs['n_nodes'], graph_nn_policy_kwargs['in_features']),
-    max_len=2e6,
+    max_len=1e6,
+    starting_s_a=None
+    #starting_s_a=replay_s_a_r_d_s[:2]
 )
 
 validation_env_kwargs_base = dict(
@@ -130,7 +134,7 @@ with_preprocessing = ''
 is_normalized = 'norm_' if graph_nn_policy_kwargs['normalize'] else ''
 folder_name = f"{with_preprocessing}{is_small}{graph_nn_policy_kwargs['n_hidden_layers']}_" \
               f"{'_'.join(np.flip(np.sort(np.unique(graph_nn_policy_kwargs['layer_sizes']))).astype(str))}_" \
-              f"{graph_nn_policy_kwargs['skip_connection_n']}_{is_normalized}v1"
+              f"{graph_nn_policy_kwargs['skip_connection_n']}_{is_normalized}v4"
 awac_alg = NFSPVectorized(policy_models, q_models, q_target_models, m_rl_circular_kwargs, m_sl_reservoir_kwargs,
                           policy_opts=policy_opts, q_opts=q_opts,
                           validation_env_kwargs_dicts=validation_env_kwargs_dicts,

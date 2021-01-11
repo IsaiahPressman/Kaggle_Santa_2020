@@ -22,15 +22,11 @@ class NFSPVectorized:
                  eta=0.1, starting_epsilon=0.12, epsilon_decay_epoch_multiplier=0.5, gamma=0.99,
                  validation_env_kwargs_dicts=(),
                  device=torch.device('cuda'),
+                 shared_agent_models=False,
                  clip_grads=10.,
                  exp_folder=Path('runs/nfsp/TEMP'),
                  checkpoint_freq=10,
                  log_params_full=False):
-        assert len(policy_models) == 2
-        assert len(q_models) == 2
-        assert len(q_target_models) == 2
-        for i in range(2):
-            q_target_models[i].load_state_dict(q_models[i].state_dict())
         if policy_opts is None:
             policy_opts = [torch.optim.Adam(pm) for pm in policy_models]
         else:
@@ -39,6 +35,29 @@ class NFSPVectorized:
             q_opts = [torch.optim.Adam(qm) for qm in q_models]
         else:
             assert len(q_opts) == len(q_models)
+        self.shared_agent_models = shared_agent_models
+        if self.shared_agent_models:
+            if len(policy_models) > 1:
+                print('WARNING: shared_agent_models is True but there is more than one policy_model')
+                policy_models = [policy_models[0]] * 2
+            if len(q_models) > 1:
+                print('WARNING: shared_agent_models is True but there is more than one q_model')
+                q_models = [q_models[0]] * 2
+            if len(q_target_models) > 1:
+                print('WARNING: shared_agent_models is True but there is more than one q_target_model')
+                q_target_models = [q_target_models[0]] * 2
+            if len(policy_opts) > 1:
+                print('WARNING: shared_agent_models is True but there is more than one policy_opt')
+                policy_opts = [policy_opts[0]] * 2
+            if len(q_opts) > 1:
+                print('WARNING: shared_agent_models is True but there is more than one q_opt')
+                policy_opts = [q_opts[0]] * 2
+        else:
+            assert len(policy_models) == 2
+            assert len(q_models) == 2
+            assert len(q_target_models) == 2
+        for i in range(2):
+            q_target_models[i].load_state_dict(q_models[i].state_dict())
         self.nfsp_agents = []
         for i in range(2):
             self.nfsp_agents.append(
@@ -89,7 +108,7 @@ class NFSPVectorized:
 
         self.env = None
         self.epoch_counter = 0
-        self.episode_counter = 0
+        self.episode_counter = -1
         self.batch_counter = 0
         self.train_step_counter = 0
         self.validation_counter = 0
@@ -101,15 +120,48 @@ class NFSPVectorized:
         ) for i in range(len(self.nfsp_agents))]
 
     def new_episode(self):
-        for agent in self.nfsp_agents:
+        self.episode_counter += 1
+        for agent_idx, agent in enumerate(self.nfsp_agents):
             agent.eval()
             agent.new_episode(self.env.n_envs)
+            self.agent_summary_writers[agent_idx].add_scalar(
+                'Episode/greedy_policies_percent',
+                agent.e_greedy_policy.sum().float() / agent.e_greedy_policy.view(-1).shape[0],
+                self.episode_counter
+            )
+        self.overall_summary_writer.add_scalar(
+            'Episode/e_greedy_epsilon',
+            self.starting_epsilon / max(
+                math.sqrt(self.epoch_counter * self.epsilon_decay_epoch_multiplier),
+                1.
+            ),
+            self.episode_counter
+        )
         return self.env.reset()
 
     def train(self, env, batch_size, n_epochs, n_expl_steps_per_epoch, n_train_batches_per_epoch,
-              n_epochs_q_target_update=1):
+              n_epochs_q_target_update=10, n_pretrain_batches=0,):
         self.env = env
         assert self.env.opponent is None
+
+        for agent in self.nfsp_agents:
+            agent.train()
+        self.batch_counter += n_pretrain_batches
+        if n_pretrain_batches > 0:
+            print(f'Pre-training policies on {n_pretrain_batches} batches from the replay buffer')
+            for i, agent in enumerate(self.nfsp_agents):
+                if len(agent.m_sl) > 0:
+                    losses, step_times = agent.train_policy(batch_size, n_pretrain_batches)
+                    self.log_train_batches(i, 'policy', losses, step_times)
+                else:
+                    print(f'Cannot pre-train agent {i} policy as there are no items in the m_sl')
+            print(f'Pre-training Q-networks on {n_pretrain_batches} batches from the replay buffer')
+            for i, agent in enumerate(self.nfsp_agents):
+                if len(agent.m_rl) > 0:
+                    losses, step_times = agent.train_q(batch_size, n_pretrain_batches, self.gamma)
+                    self.log_train_batches(i, 'q', losses, step_times)
+                else:
+                    print(f'Cannot pre-train agent {i} policy as there are no items in m_rl')
 
         print(f'\nRunning main training loop with {n_epochs} epochs')
         # Don't reset episodes except when they are finished, so that the S_A_R_S replay buffer works correctly
@@ -121,14 +173,6 @@ class NFSPVectorized:
                 for agent in self.nfsp_agents:
                     agent.update_q_target()
             print(f'Sampling {n_expl_steps_per_epoch} time-steps from the environment')
-            self.overall_summary_writer.add_scalar(
-                'Episode/e_greedy_epsilon',
-                self.starting_epsilon / max(
-                    math.sqrt(self.epoch_counter * self.epsilon_decay_epoch_multiplier),
-                    1.
-                ),
-                self.epoch_counter
-            )
             episode_reward_sums = r
             for step in tqdm.trange(n_expl_steps_per_epoch):
                 start_time = time.time()
@@ -185,7 +229,6 @@ class NFSPVectorized:
                         episode_reward_sums.mean(dim=0).cpu().clone() / self.env.r_norm,
                         info_dict
                     )
-                    self.episode_counter += 1
                     s, r, done, info_dict = self.new_episode()
                     episode_reward_sums = r
                 self.overall_summary_writer.add_scalar('Time/exploration_step_time_ms',
@@ -395,6 +438,8 @@ class NFSPVectorized:
                     episode_reward_sums[-1] = episode_reward_sums[-1].mean(dim=-1).cpu().clone() / val_env.r_norm
                     final_info_dicts.append(info_dict)
                 self.log_validation_episodes(validation_agent_idx, 'q', episode_reward_sums, final_info_dicts)
+            if self.shared_agent_models:
+                break
         self.validation_counter += 1
 
     def save(self, finished=False):
@@ -471,9 +516,11 @@ class NFSPTrainAgent:
             start_time = time.time()
             s_batch, a_batch = self.m_sl.sample(batch_size)
             logits = self.policy(s_batch.to(device=self.device))
-            m = distributions.Categorical(F.softmax(logits, dim=-1))
-            log_probs = m.log_prob(a_batch.to(device=self.device).view(-1))
-            loss = -log_probs.mean()
+            a_batch = a_batch.to(device=self.device).view(-1)
+            # m = distributions.Categorical(F.softmax(logits, dim=-1))
+            # log_probs = m.log_prob(a_batch.to(device=self.device).view(-1))
+            # loss = -log_probs.mean()
+            loss = F.cross_entropy(logits.view(a_batch.shape[0], -1), a_batch.long())
 
             self.policy_opt.zero_grad()
             loss.backward()
@@ -580,6 +627,19 @@ class CircularReplayBuffer:
         assert r_batch.shape[0] == batch_len
         assert next_s_batch.shape[0] == batch_len
         assert d_batch.shape[0] == batch_len
+        if batch_len >= self.max_len:
+            print(f'CircularReplayBuffer.append_samples_batch:WARNING: '
+                  f'Truncating batch of length {batch_len} to {self.max_len-1}')
+            s_batch = s_batch[:self.max_len - 1]
+            a_batch = a_batch[:self.max_len - 1]
+            r_batch = r_batch[:self.max_len - 1]
+            d_batch = d_batch[:self.max_len - 1]
+            next_s_batch = next_s_batch[:self.max_len - 1]
+            batch_len = s_batch.shape[0]
+            assert a_batch.shape[0] == batch_len
+            assert r_batch.shape[0] == batch_len
+            assert next_s_batch.shape[0] == batch_len
+            assert d_batch.shape[0] == batch_len
         new_len = self._top + batch_len
         if new_len <= self.max_len:
             self._s_buffer[self._top:new_len] = s_batch
@@ -612,12 +672,20 @@ class CircularReplayBuffer:
 
 
 class ReservoirReplayBuffer:
-    def __init__(self, s_shape, max_len=1e6):
+    def __init__(self, s_shape, max_len=1e6, starting_s_a=None):
         self.max_len = int(max_len)
         self._s_buffer = torch.zeros(self.max_len, *s_shape)
         self._a_buffer = torch.zeros(self.max_len)
         self.current_size = 0
         self._top = 0
+        if starting_s_a is not None:
+            self.append_samples_batch(*starting_s_a)
+            # Randomly shuffle initial experiences
+            shuffled_idxs = np.arange(self.current_size)
+            np.random.shuffle(shuffled_idxs)
+            shuffled_idxs = np.append(shuffled_idxs, np.arange(self.current_size, self.max_len))
+            self._s_buffer = self._s_buffer[torch.from_numpy(shuffled_idxs)]
+            self._a_buffer = self._a_buffer[torch.from_numpy(shuffled_idxs)]
 
     def sample(self, sample_size):
         if self.current_size <= sample_size:
