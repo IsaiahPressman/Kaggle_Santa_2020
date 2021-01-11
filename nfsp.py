@@ -129,15 +129,35 @@ class NFSPVectorized:
                 ], dim=1)
                 next_s, r, done, info_dict = self.env.step(a)
                 d_tensor = torch.ones(r.shape) if done else torch.zeros(r.shape)
-                for agent, player_s, player_a, player_r, player_d, player_next_s in zip(
-                    self.nfsp_agents,
+                for agent_idx, player_s, player_a, player_r, player_d, player_next_s in zip(
+                    range(len(self.nfsp_agents)),
                     s.chunk(2, dim=1),
                     a.chunk(2, dim=1),
                     r.chunk(2, dim=1),
                     d_tensor.chunk(2, dim=1),
                     next_s.chunk(2, dim=1),
                 ):
-                    agent.log_s_a_r_d_next_s(
+                    self.agent_summary_writers[agent_idx].add_scalar(
+                        'Info/m_rl_length',
+                        len(self.nfsp_agents[agent_idx].m_rl),
+                        self.train_step_counter
+                    )
+                    self.agent_summary_writers[agent_idx].add_scalar(
+                        'Info/m_sl_length',
+                        len(self.nfsp_agents[agent_idx].m_sl),
+                        self.train_step_counter
+                    )
+                    self.agent_summary_writers[agent_idx].add_scalar(
+                        'Info/m_rl__top',
+                        self.nfsp_agents[agent_idx].m_rl._top,
+                        self.train_step_counter
+                    )
+                    self.agent_summary_writers[agent_idx].add_scalar(
+                        'Info/m_sl__top',
+                        self.nfsp_agents[agent_idx].m_sl._top,
+                        self.train_step_counter
+                    )
+                    self.nfsp_agents[agent_idx].log_s_a_r_d_next_s(
                         player_s.view(-1, *s.shape[-2:]),
                         player_a.view(-1).detach(),
                         player_r.view(-1),
@@ -154,7 +174,7 @@ class NFSPVectorized:
                     self.episode_counter += 1
                     s, r, done, info_dict = self.new_episode()
                     episode_reward_sums = r
-                self.overall_summary_writer.add_scalar('time/exploration_step_time_ms',
+                self.overall_summary_writer.add_scalar('Time/exploration_step_time_ms',
                                                        (time.time() - start_time) * 1000,
                                                        self.train_step_counter)
                 self.train_step_counter += 1
@@ -177,44 +197,44 @@ class NFSPVectorized:
                 self.run_validation()
                 self.save()
             print()
-            self.overall_summary_writer.add_scalar('time/epoch_time_minutes',
+            self.overall_summary_writer.add_scalar('Time/epoch_time_minutes',
                                                    (time.time() - epoch_start_time) / 60.,
                                                    self.epoch_counter - 1)
         self.save(finished=True)
 
     def log_train_batches(self, agent_idx, policy_or_q, losses, step_times):
         for i, loss, step_time in zip(range(len(losses)), losses, step_times):
-            self.agent_summary_writers[agent_idx].add_scalar(f'batch/{policy_or_q}_loss',
+            self.agent_summary_writers[agent_idx].add_scalar(f'Batch/{policy_or_q}_loss',
                                                              loss.numpy().item(),
                                                              self.batch_counter - len(losses) + i)
-            self.agent_summary_writers[agent_idx].add_scalar(f'time/{policy_or_q}_train_step_time_ms',
+            self.agent_summary_writers[agent_idx].add_scalar(f'Time/{policy_or_q}_train_step_time_ms',
                                                              step_time * 1000,
                                                              self.batch_counter - len(losses) + i)
 
     def log_train_episode(self, episode_reward_sums, final_info_dict):
         pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)
         self.overall_summary_writer.add_histogram(
-            'episode/pull_rewards',
+            'Episode/pull_rewards',
             pull_rewards_sum,
             self.episode_counter
         )
         self.overall_summary_writer.add_scalar(
-            'episode/mean_pull_rewards',
+            'Episode/mean_pull_rewards',
             pull_rewards_sum.mean().numpy().item(),
             self.episode_counter
         )
         for agent_idx in range(len(self.nfsp_agents)):
             self.agent_summary_writers[agent_idx].add_scalar(
-                f'episode/reward_{self.env.reward_type}',
+                f'Episode/reward_{self.env.reward_type}',
                 episode_reward_sums[agent_idx].numpy().item(),
                 self.episode_counter)
             self.agent_summary_writers[agent_idx].add_histogram(
-                f'episode/pull_rewards',
+                f'Episode/pull_rewards',
                 final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, agent_idx].numpy(),
                 self.episode_counter
             )
             self.agent_summary_writers[agent_idx].add_scalar(
-                f'episode/mean_pull_rewards',
+                f'Episode/mean_pull_rewards',
                 final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, agent_idx].mean().numpy().item(),
                 self.episode_counter
             )
@@ -224,25 +244,25 @@ class NFSPVectorized:
             for name, param in model.named_parameters():
                 if param.requires_grad:
                     self.agent_summary_writers[i].add_scalar(
-                        f'params/policy.{name}_mean_magnitude',
+                        f'Params/policy.{name}_mean_magnitude',
                         param.detach().cpu().clone().abs().mean().numpy().item(),
                         self.epoch_counter
                     )
                     if param.view(-1).shape[0] > 1:
                         self.agent_summary_writers[i].add_scalar(
-                            f'params/policy.{name}_standard_deviation',
+                            f'Params/policy.{name}_standard_deviation',
                             param.detach().cpu().clone().std().numpy().item(),
                             self.epoch_counter
                         )
                     else:
                         self.agent_summary_writers[i].add_scalar(
-                            f'params/policy.{name}_standard_deviation',
+                            f'Params/policy.{name}_standard_deviation',
                             0.,
                             self.epoch_counter
                         )
                     if self.log_params_full:
                         self.agent_summary_writers[i].add_histogram(
-                            f'params/policy.{name}',
+                            f'Params/policy.{name}',
                             param.detach().cpu().clone().numpy(),
                             self.epoch_counter
                         )
@@ -250,25 +270,25 @@ class NFSPVectorized:
             for name, param in model.named_parameters():
                 if param.requires_grad:
                     self.agent_summary_writers[i].add_scalar(
-                        f'params/q.{name}_mean_magnitude',
+                        f'Params/q.{name}_mean_magnitude',
                         param.detach().cpu().clone().abs().mean().numpy().item(),
                         self.epoch_counter
                     )
                     if param.view(-1).shape[0] > 1:
                         self.agent_summary_writers[i].add_scalar(
-                            f'params/q.{name}_standard_deviation',
+                            f'Params/q.{name}_standard_deviation',
                             param.detach().cpu().clone().std().numpy().item(),
                             self.epoch_counter
                         )
                     else:
                         self.agent_summary_writers[i].add_scalar(
-                            f'params/q.{name}_standard_deviation',
+                            f'Params/q.{name}_standard_deviation',
                             0.,
                             self.epoch_counter
                         )
                     if self.log_params_full:
                         self.agent_summary_writers[i].add_histogram(
-                            f'params/q.{name}',
+                            f'Params/q.{name}',
                             param.detach().cpu().clone().numpy(),
                             self.epoch_counter
                         )
@@ -283,33 +303,33 @@ class NFSPVectorized:
             env_name = opponent
 
             self.agent_summary_writers[agent_idx].add_histogram(
-                f'validation/{env_name}_{policy_or_q}_game_results',
+                f'Validation/{env_name}_{policy_or_q}_game_results',
                 ers.numpy(),
                 self.validation_counter
             )
             self.agent_summary_writers[agent_idx].add_histogram(
-                f'validation/{env_name}_{policy_or_q}_hero_pull_rewards',
+                f'Validation/{env_name}_{policy_or_q}_hero_pull_rewards',
                 fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 0].numpy(),
                 self.validation_counter
             )
             self.agent_summary_writers[agent_idx].add_histogram(
-                f'validation/{env_name}_{policy_or_q}_villain_pull_rewards',
+                f'Validation/{env_name}_{policy_or_q}_villain_pull_rewards',
                 fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 1].numpy(),
                 self.validation_counter
             )
             self.agent_summary_writers[agent_idx].add_scalar(
-                f'validation/{env_name}_{policy_or_q}_win_percent',
+                f'Validation/{env_name}_{policy_or_q}_win_percent',
                 # W/D/L values are 1/0/-1, so they need to be scaled to 1/0.5/0 to be represented as a percent
                 (ers.mean().numpy().item() + 1) / 2. * 100.,
                 self.validation_counter
             )
             self.agent_summary_writers[agent_idx].add_scalar(
-                f'validation/{env_name}_{policy_or_q}_mean_hero_pull_rewards',
+                f'Validation/{env_name}_{policy_or_q}_mean_hero_pull_rewards',
                 fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 0].mean().numpy().item(),
                 self.validation_counter
             )
             self.agent_summary_writers[agent_idx].add_scalar(
-                f'validation/{env_name}_{policy_or_q}_mean_villain_pull_rewards',
+                f'Validation/{env_name}_{policy_or_q}_mean_villain_pull_rewards',
                 fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 1].mean().numpy().item(),
                 self.validation_counter
             )
@@ -333,7 +353,7 @@ class NFSPVectorized:
                         next_s, r, done, info_dict = val_env.step(a)
                         s = next_s
                         episode_reward_sums[-1] += r
-                        self.overall_summary_writer.add_scalar(f'time/val_env{i}_policy_step_time_ms',
+                        self.overall_summary_writer.add_scalar(f'Time/val_env{i}_policy_step_time_ms',
                                                                (time.time() - start_time) * 1000,
                                                                self.policy_validation_step_counters[i])
                         self.policy_validation_step_counters[i] += 1
@@ -354,7 +374,7 @@ class NFSPVectorized:
                         next_s, r, done, info_dict = val_env.step(a)
                         s = next_s
                         episode_reward_sums[-1] += r
-                        self.overall_summary_writer.add_scalar(f'time/val_env{i}_q_step_time_ms',
+                        self.overall_summary_writer.add_scalar(f'Time/val_env{i}_q_step_time_ms',
                                                                (time.time() - start_time) * 1000,
                                                                self.q_validation_step_counters[i])
                         self.q_validation_step_counters[i] += 1
