@@ -120,7 +120,7 @@ class PullVegasSlotMachines(VectorizedAgent):
         else:
             my_pulls, opp_pulls, wins = states.chunk(3, dim=-1)
             losses = my_pulls - wins
-            ev = (wins - losses + opp_pulls - (opp_pulls>0)*1.5) / (wins + losses + opp_pulls)
+            ev = ((wins+1) - losses + opp_pulls - (opp_pulls>0)*1.5) / ((wins+1) + losses + opp_pulls)
             actions = ev.squeeze(-1).argmax(dim=-1)
         return actions
 
@@ -157,16 +157,23 @@ class PullVegasSlotMachinesImproved(VectorizedAgent):
             self.opp_pulls += opp_pull
             if len(self.my_actions_list) >= 2:
                 self.opp_continues = torch.where(
-                    opp_pull == self.opp_last_action,
+                    (opp_pull == 1) & (self.opp_last_action == 1),
                     self.opp_continues + 1.,
                     torch.zeros_like(self.opp_continues)
                 )
+        """
+        print(len(self.my_actions_list))
+        print(self.wins)
+        print(((opp_pull == 1) & (self.opp_last_action == 1)).sum(), (opp_pull == 1) & (self.opp_last_action == 1))
+        print(self.losses)
+        print(self.opp_pulls)
+        print(self.opp_continues)
+        print('\n\n')"""
 
-        print(my_pull.shape)
         win = win[..., my_pull[0] == 1]
         next_bandits = self.get_next_bandit()
         if len(self.my_actions_list) == 0:
-            actions = next_bandits
+            actions = torch.randint(self.n_bandits, size=states.shape[:-2], device=states.device)
         elif len(self.my_actions_list) < 3:
             actions = torch.where(
                 win == 1,
@@ -176,9 +183,9 @@ class PullVegasSlotMachinesImproved(VectorizedAgent):
         else:
             actions_if_three_in_a_row = torch.where(
                 (self.my_actions_list[-1] == self.my_actions_list[-2]) & (
-                            self.my_actions_list[-1] == self.my_actions_list[-3]),
+                        self.my_actions_list[-1] == self.my_actions_list[-3]),
                 torch.where(
-                    torch.rand(next_bandits.shape) < 0.5,
+                    torch.rand(size=next_bandits.shape, device=states.device) < 0.5,
                     self.my_actions_list[-1],
                     next_bandits
                 ),
@@ -192,11 +199,13 @@ class PullVegasSlotMachinesImproved(VectorizedAgent):
 
         self.my_actions_list.append(actions)
         self.opp_last_action = opp_pull.clone()
-        print(next_bandits.shape, win.shape, actions.shape)
+        if len(self.my_actions_list) > 5:
+            #assert False
+            pass
         return actions
 
     def get_next_bandit(self):
-        ev = (self.wins - self.losses + self.opp_pulls - (self.opp_pulls>0)*1.5 + self.opp_continues) \
+        ev = (self.wins - self.losses + self.opp_pulls - (self.opp_pulls > 0)*1.5 + self.opp_continues) \
             / (self.wins + self.losses + self.opp_pulls) \
             * torch.pow(0.97, self.wins + self.losses + self.opp_pulls)
         return ev.argmax(dim=-1)
