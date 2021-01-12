@@ -52,6 +52,9 @@ class VectorizedAgent:
     def __call__(self, states):
         return None
 
+    def reset(self):
+        pass
+
 
 class AlwaysFirstAgent(VectorizedAgent):
     def __init__(self):
@@ -100,6 +103,10 @@ class MultiAgent(VectorizedAgent):
                              f'from states tensor of shape {states.shape}')
         else:
             return torch.cat([a(s) for a, s in zip(self.agents, states_chunked)], dim=self.envs_dim)
+
+    def reset(self):
+        for agent in self.agents:
+            agent.reset()
 
 
 class PullVegasSlotMachines(VectorizedAgent):
@@ -161,14 +168,6 @@ class PullVegasSlotMachinesImproved(VectorizedAgent):
                     self.opp_continues + 1.,
                     torch.zeros_like(self.opp_continues)
                 )
-        """
-        print(len(self.my_actions_list))
-        print(self.wins)
-        print(((opp_pull == 1) & (self.opp_last_action == 1)).sum(), (opp_pull == 1) & (self.opp_last_action == 1))
-        print(self.losses)
-        print(self.opp_pulls)
-        print(self.opp_continues)
-        print('\n\n')"""
 
         win = win[..., my_pull[0] == 1]
         next_bandits = self.get_next_bandit()
@@ -209,6 +208,14 @@ class PullVegasSlotMachinesImproved(VectorizedAgent):
             / (self.wins + self.losses + self.opp_pulls) \
             * torch.pow(0.97, self.wins + self.losses + self.opp_pulls)
         return ev.argmax(dim=-1)
+
+    def reset(self):
+        self.wins = None
+        self.losses = None
+        self.opp_pulls = None
+        self.opp_last_action = None
+        self.opp_continues = None
+        self.my_actions_list = []
 
     
 class RandomAgent(VectorizedAgent):

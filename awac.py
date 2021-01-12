@@ -268,6 +268,8 @@ class AWACVectorized:
             episode_reward_sums = []
             final_info_dicts = []
             for i in tqdm.trange(len(self.validation_env_kwargs_dicts)):
+                if 'opponent' in self.validation_env_kwargs_dicts[i].keys():
+                    self.validation_env_kwargs_dicts[i]['opponent'].reset()
                 # Lazily construct validation envs to conserve GPU memory
                 val_env = ve.KaggleMABEnvTorchVectorized(**self.validation_env_kwargs_dicts[i])
                 s, r, done, info_dict = val_env.reset()

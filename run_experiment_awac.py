@@ -65,7 +65,7 @@ replay_buffer = ReplayBuffer(
 # Conserve memory
 del replay_s_a_r_d_s
 validation_env_kwargs_base = dict(
-    n_envs=1000,
+    n_envs=500,
     env_device=DEVICE,
     out_device=DEVICE,
     obs_type=env_kwargs['obs_type']

@@ -119,6 +119,8 @@ class KaggleMABEnvTorchVectorized:
     @_single_player_decorator
     @_out_device_decorator
     def reset(self):
+        if self.opponent is not None:
+            self.opponent.reset()
         self.timestep = 0
         self.orig_thresholds = torch.randint(
             self.sample_resolution + 1,
