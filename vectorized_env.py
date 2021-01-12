@@ -152,7 +152,8 @@ class KaggleMABEnvTorchVectorized:
                 raise ValueError(f'Unsupported opponent obs_type {self.opponent_obs_type}')
             opp_actions = self.opponent(opp_obs[:, 1].unsqueeze(1))
             actions = torch.cat([actions, opp_actions], dim=1)
-        assert actions.shape == (self.n_envs, self.n_players), f'actions.shape was: {actions.shape}'
+        if actions.shape != (self.n_envs, self.n_players):
+            raise ValueError(f'actions.shape was: {actions.shape}, should have been {(self.n_envs, self.n_players)}')
         assert not self.done
         self.timestep += 1
         actions = actions.to(self.env_device).detach()
