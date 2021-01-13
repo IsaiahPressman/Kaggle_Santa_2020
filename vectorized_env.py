@@ -366,7 +366,8 @@ class KaggleMABEnvTorchVectorized:
         # Each actor receives a tensor of shape: (1, 1, n_bandits, n_steps, n_players+1)
         # The overall obs tensor shape is: (n_envs, n_players, n_bandits, n_steps, n_players+1)
         # The output is a mostly sparse tensor where each value is either 0. or 1.
-
+        if not self.store_every_step:
+            raise RuntimeError('This environment is not storing every_step information')
         # Deprecated sparse implementation:
         """
         all_pulls_onehot = torch.sparse.FloatTensor(
