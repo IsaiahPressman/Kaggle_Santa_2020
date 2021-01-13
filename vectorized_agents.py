@@ -1,5 +1,6 @@
 import base64
 from copy import copy
+import numpy as np
 import pickle
 import time
 import torch
@@ -94,7 +95,9 @@ class MultiAgent(VectorizedAgent):
         # n_envs, n_players, n_bandits, features
         self.envs_dim = envs_dim
         self.name = 'MultiAgent'
-        self.obs_type = ve.SUMMED_OBS
+        obs_types_unique = np.unique([a.obs_type for a in self.agents])
+        assert len(obs_types_unique) == 1
+        self.obs_type = obs_types_unique.item()
     
     def __call__(self, states):
         states_chunked = states.chunk(len(self.agents), dim=self.envs_dim)
@@ -133,12 +136,14 @@ class PullVegasSlotMachines(VectorizedAgent):
 
 
 class PullVegasSlotMachinesImproved(VectorizedAgent):
-    def __init__(self, n_bandits=100):
+    def __init__(self, obs_norm, n_bandits=100):
         super().__init__()
+        self.obs_norm = obs_norm
         self.n_bandits = n_bandits
         self.name = 'PullVegasSlotMachinesImproved'
-        self.obs_type = ve.LAST_STEP_OBS
+        self.obs_type = ve.SUMMED_OBS
 
+        self.last_states = None
         self.wins = None
         self.losses = None
         self.opp_pulls = None
@@ -148,19 +153,18 @@ class PullVegasSlotMachinesImproved(VectorizedAgent):
 
     def __call__(self, states):
         assert states.shape[-2:] == (self.n_bandits, 3)
-        my_pull, opp_pull, win = states.chunk(3, dim=-1)
-        my_pull = my_pull.squeeze(-1)
-        opp_pull = opp_pull.squeeze(-1)
-        win = win.squeeze(-1)
-        if self.wins is None:
-            self.wins = torch.ones_like(win)
-            self.losses = torch.zeros_like(win)
-            self.opp_pulls = torch.zeros_like(win)
+        states = states / self.obs_norm
+        if self.last_states is None:
+            self.last_states = torch.zeros_like(states)
+        _, opp_pull, win = [t.squeeze(-1) for t in (states - self.last_states).chunk(3, dim=-1)]
+        self.my_pulls, self.opp_pulls, self.wins = [t.squeeze(-1) for t in states.chunk(3, dim=-1)]
+        self.losses = self.my_pulls - self.wins
+        self.wins += 1.
+        self.last_states = states.clone()
+        if self.opp_last_action is None:
             self.opp_last_action = torch.zeros_like(win)
             self.opp_continues = torch.zeros_like(win)
         else:
-            self.wins[..., my_pull == 1] += win[..., my_pull == 1]
-            self.losses[..., my_pull == 1] += 1. - win[..., my_pull == 1]
             self.opp_pulls += opp_pull
             if len(self.my_actions_list) >= 2:
                 self.opp_continues = torch.where(
@@ -169,7 +173,7 @@ class PullVegasSlotMachinesImproved(VectorizedAgent):
                     torch.zeros_like(self.opp_continues)
                 )
 
-        win = win[..., my_pull[0] == 1]
+        win = win.sum(dim=-1)
         next_bandits = self.get_next_bandit()
         if len(self.my_actions_list) == 0:
             actions = torch.randint(self.n_bandits, size=states.shape[:-2], device=states.device)
@@ -195,12 +199,8 @@ class PullVegasSlotMachinesImproved(VectorizedAgent):
                 self.my_actions_list[-1],
                 actions_if_three_in_a_row
             )
-
         self.my_actions_list.append(actions)
         self.opp_last_action = opp_pull.clone()
-        if len(self.my_actions_list) > 5:
-            #assert False
-            pass
         return actions
 
     def get_next_bandit(self):
@@ -210,6 +210,7 @@ class PullVegasSlotMachinesImproved(VectorizedAgent):
         return ev.argmax(dim=-1)
 
     def reset(self):
+        self.last_states = None
         self.wins = None
         self.losses = None
         self.opp_pulls = None
