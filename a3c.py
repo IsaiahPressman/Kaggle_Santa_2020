@@ -292,30 +292,30 @@ class A3CVectorized:
             self.true_ep_num
         )
 
-        if self.true_ep_num % self.checkpoint_freq == 0:
-            for name, param in self.model.named_parameters():
-                if param.requires_grad:
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                self.summary_writer.add_scalar(
+                    f'Params/{name}_mean_magnitude',
+                    param.detach().cpu().clone().abs().mean().numpy().item(),
+                    self.true_ep_num
+                )
+                if param.view(-1).shape[0] > 1:
                     self.summary_writer.add_scalar(
-                        f'Params/{name}_mean_magnitude',
-                        param.detach().cpu().clone().abs().mean().numpy().item(),
+                        f'Params/{name}_standard_deviation',
+                        param.detach().cpu().clone().std().numpy().item(),
                         self.true_ep_num
                     )
-                    if param.view(-1).shape[0] > 1:
-                        self.summary_writer.add_scalar(
-                            f'Params/{name}_standard_deviation',
-                            param.detach().cpu().clone().std().numpy().item(),
-                            self.true_ep_num
-                        )
-                    else:
-                        self.summary_writer.add_scalar(
-                            f'Params/{name}_standard_deviation',
-                            0.,
-                            self.true_ep_num
-                        )
-                    if self.log_params_full:
-                        self.summary_writer.add_histogram(f'Params/{name}',
-                                                          param.clone().cpu().data.numpy(),
-                                                          self.true_ep_num)
+                else:
+                    self.summary_writer.add_scalar(
+                        f'Params/{name}_standard_deviation',
+                        0.,
+                        self.true_ep_num
+                    )
+                if self.log_params_full and self.true_ep_num % self.checkpoint_freq == 0:
+                    self.summary_writer.add_histogram(f'Params/{name}',
+                                                      param.clone().cpu().data.numpy(),
+                                                      self.true_ep_num)
+
 
     def get_opponent(self, idx):
         if idx < 0:

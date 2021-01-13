@@ -102,8 +102,10 @@ class KaggleMABEnvTorchVectorized:
         self.player_rewards_sums = None
         self.last_pulls = None
         self.last_rewards = None
-        self.all_pull_indices = None
-        self.all_pull_rewards = None
+        self.all_pulls_onehot = None
+        self.all_pull_rewards_onehot = None
+        self.store_every_step = (self.obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED) or
+                                 self.opponent_obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED))
         self.reset()
         
     def _single_player_decorator(f):
@@ -133,13 +135,22 @@ class KaggleMABEnvTorchVectorized:
             dtype=torch.float64,
             device=self.env_device
         )
-        self.player_n_pulls = torch.zeros((self.n_envs, self.n_players, self.n_bandits), device=self.env_device)
+        self.player_n_pulls = torch.zeros((self.n_envs, self.n_players, self.n_bandits),
+                                          device=self.env_device, dtype=torch.float)
         self.player_rewards_sums = torch.zeros_like(self.player_n_pulls)
         self.last_pulls = torch.zeros_like(self.player_n_pulls)
         self.last_rewards = torch.zeros_like(self.player_n_pulls)
-        # For EVERY_STEP_OBS, store the action and pull_reward history as a sparse tensor
-        self.all_pull_indices = torch.empty((4, 0), dtype=torch.long, device=self.env_device)
-        self.all_pull_rewards = torch.empty(0, dtype=torch.float, device=self.env_device)
+        # For EVERY_STEP_OBS, store the action and pull_reward history
+        # This is memory intensive, so is only done when necessary
+        if self.store_every_step:
+            self.all_pulls_onehot = torch.zeros((self.n_envs, self.n_players, self.n_bandits, self.n_steps),
+                                                device=self.env_device, dtype=torch.float)
+            self.all_pull_rewards_onehot = torch.zeros_like(self.all_pulls_onehot)
+            # Deprecated sparse implementation:
+            """
+            self.all_pull_indices = torch.empty((4, 0), dtype=torch.long, device=self.env_device)
+            self.all_pull_rewards = torch.empty(0, dtype=torch.float, device=self.env_device)
+            """
 
         rewards = torch.zeros((self.n_envs, self.n_players), device=self.env_device) * self.r_norm
         return self.obs, rewards, self.done, self.info_dict
@@ -206,23 +217,40 @@ class KaggleMABEnvTorchVectorized:
             actions.view(-1)
         ] += pull_rewards.view(-1)
         # Used when obs_type == EVERY_STEP_OBS
-        envs_idxs = envs_idxs.to(device=self.env_device)
-        players_idxs = players_idxs.to(device=self.env_device)
-        timestep_idxs = torch.zeros_like(envs_idxs) + self.timestep - 1
-        this_step_indices = torch.stack([
-            envs_idxs,
-            players_idxs,
-            timestep_idxs,
-            actions.view(-1)
-        ], dim=0).to(self.env_device)
-        self.all_pull_indices = torch.cat([
-            self.all_pull_indices,
-            this_step_indices
-        ], dim=1)
-        self.all_pull_rewards = torch.cat([
-            self.all_pull_rewards,
-            pull_rewards.view(-1).float()
-        ], dim=0)
+        if self.store_every_step:
+            timestep_idxs = torch.zeros_like(envs_idxs) + self.timestep - 1
+            self.all_pulls_onehot[
+                envs_idxs,
+                players_idxs,
+                actions.view(-1),
+                timestep_idxs
+            ] += 1.
+            self.all_pull_rewards_onehot[
+                envs_idxs,
+                players_idxs,
+                actions.view(-1),
+                timestep_idxs
+            ] += pull_rewards.view(-1)
+            # Deprecated sparse implementation:
+            """
+            envs_idxs = envs_idxs.to(device=self.env_device)
+            players_idxs = players_idxs.to(device=self.env_device)
+            timestep_idxs = torch.zeros_like(envs_idxs) + self.timestep - 1
+            this_step_indices = torch.stack([
+                envs_idxs,
+                players_idxs,
+                actions.view(-1),
+                timestep_idxs
+            ], dim=0).to(self.env_device)
+            self.all_pull_indices = torch.cat([
+                self.all_pull_indices,
+                this_step_indices
+            ], dim=1)
+            self.all_pull_rewards = torch.cat([
+                self.all_pull_rewards,
+                pull_rewards.view(-1).float()
+            ], dim=0)
+            """
         
         if self.reward_type == EVERY_STEP_TRUE:
             rewards = pull_rewards
@@ -338,29 +366,33 @@ class KaggleMABEnvTorchVectorized:
         # Each actor receives a tensor of shape: (1, 1, n_bandits, n_steps, n_players+1)
         # The overall obs tensor shape is: (n_envs, n_players, n_bandits, n_steps, n_players+1)
         # The output is a mostly sparse tensor where each value is either 0. or 1.
-        all_pulls = torch.sparse.FloatTensor(
+
+        # Deprecated sparse implementation:
+        """
+        all_pulls_onehot = torch.sparse.FloatTensor(
             self.all_pull_indices,
             torch.ones(self.all_pull_indices.shape[1], dtype=torch.float, device=self.env_device),
-            torch.Size([self.n_envs, self.n_players, self.n_steps, self.n_bandits])
+            torch.Size([self.n_envs, self.n_players, self.n_bandits, self.n_steps])
         ).to_dense()
         all_rewards = torch.sparse.FloatTensor(
             self.all_pull_indices,
             self.all_pull_rewards,
-            torch.Size([self.n_envs, self.n_players, self.n_steps, self.n_bandits])
+            torch.Size([self.n_envs, self.n_players, self.n_bandits, self.n_steps])
         ).to_dense()
+        """
         if self.n_players == 1:
             obs = torch.stack([
-                all_pulls,
-                all_rewards
+                self.all_pulls_onehot,
+                self.all_pull_rewards_onehot
             ], dim=-1)
         else:
             all_pulls_relative = torch.stack([
-                all_pulls,
-                all_pulls[:, [1, 0], :]
+                self.all_pulls_onehot,
+                self.all_pulls_onehot[:, [1, 0], :]
             ], dim=-1)
             obs = torch.cat([
                 all_pulls_relative,
-                all_rewards.unsqueeze(-1)
+                self.all_pull_rewards_onehot.unsqueeze(-1)
             ], dim=-1)
         return obs.detach()
 
