@@ -171,7 +171,7 @@ class A3CVectorized:
         obs_type_group_betas = [self.opp_b[opp_obs_types == ot].sum() for ot in obs_type_groups]
         # Sample opponents randomly if the agent is winning <= some fraction of it's games,
         # otherwise use thompson sampling
-        sample_randomly = np.sum(self.opp_b - 1) <= np.sum(self.opp_a - 1) / 5.
+        sample_randomly = np.sum(self.opp_b - 1) <= np.sum(self.opp_a - 1) / 10.
         if sample_randomly:
             selected_obs_type_idx = np.arange(len(obs_type_groups))[
                 obs_type_groups == opp_obs_types[np.random.choice(len(opp_obs_types))]
