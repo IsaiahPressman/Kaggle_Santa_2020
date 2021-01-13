@@ -25,7 +25,7 @@ OBS_TYPES = (
     SUMMED_OBS,
     SUMMED_OBS_WITH_TIMESTEP,
     LAST_STEP_OBS,
-    SUMMED_OBS_NOISE
+    SUMMED_OBS_NOISE,
     EVERY_STEP_OBS,
     EVERY_STEP_OBS_RAVELLED
 )
@@ -86,7 +86,7 @@ class KaggleMABEnvTorchVectorized:
         self.env_device = env_device
         self.out_device = out_device
 
-        if self.obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP,SUMMED_OBS_NOISE):
+        if self.obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP, SUMMED_OBS_NOISE):
             self.obs_norm = self.n_bandits / self.n_steps
         elif self.obs_type in (LAST_STEP_OBS, EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED):
             self.obs_norm = 1.
@@ -325,12 +325,13 @@ class KaggleMABEnvTorchVectorized:
         # The overall obs tensor is then of shape (1,1,n_bandits,n_players+2) (including rewards and timestep)
         # The final axis contains the player's num_pulls first and other player actions listed afterwards
         # This is currently not implemented for more than 2 players
-        noise=torch.randn((self.n_envs, self.n_players, self.n_bandits),device=self.env_device)
+        # Rescale the noise so that it is the intended noise value after being normalized
+        noise = torch.randn_like(self.player_rewards_sums) * self.n_steps / self.n_bandits
         if self.n_players == 1:
             obs = torch.stack([
                 self.player_n_pulls,
                 self.player_rewards_sums,
-                timestep_broadcasted
+                noise
             ], dim=-1)
         else:
             player_n_pulls_player_relative = torch.stack([

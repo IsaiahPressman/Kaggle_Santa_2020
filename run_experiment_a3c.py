@@ -1,4 +1,5 @@
 import base64
+import numpy as np
 from pathlib import Path
 import pickle
 import shutil
@@ -18,6 +19,7 @@ graph_nn_kwargs = dict(
     in_features=3 * 1999,
     n_nodes=100,
     n_hidden_layers=3,
+    preprocessing_layer=False,
     layer_sizes=[256, 256, 64, 64],
     layer_class=gnn.FullyConnectedGNNLayer,
     normalize=True,
@@ -66,8 +68,12 @@ initial_opponent_pool = [
     va.SavedRLAgent('a3c_agent_small_8_32-790', **rl_agent_opp_kwargs),
 ]
 
-#folder_name = f"small_{graph_nn_kwargs['n_hidden_layers']}_{graph_nn_kwargs['layer_sizes']}_v2"
-folder_name = 'TEMP'
+is_small = 'small_' if graph_nn_kwargs['layer_class'] == gnn.SmallFullyConnectedGNNLayer else ''
+with_preprocessing = 'preprocessing_' if graph_nn_kwargs['preprocessing_layer'] else ''
+is_normalized = 'norm_' if graph_nn_kwargs['normalize'] else ''
+folder_name = f"{with_preprocessing}{is_small}{graph_nn_kwargs['n_hidden_layers']}_" \
+              f"{'_'.join(np.flip(np.sort(np.unique(graph_nn_kwargs['layer_sizes']))).astype(str))}_" \
+              f"{graph_nn_kwargs['skip_connection_n']}_{is_normalized}v1"
 a3c_alg = A3CVectorized(model_constructor, optimizer, env_kwargs['obs_type'],
                         model=model, device=DEVICE,
                         exp_folder=Path(f'runs/a3c/{folder_name}'),
