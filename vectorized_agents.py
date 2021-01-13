@@ -226,7 +226,7 @@ class RandomAgent(VectorizedAgent):
         self.obs_type = ve.SUMMED_OBS
         
     def __call__(self, states):
-        assert states.shape[-2:] == (self.n_bandits, 3)
+        assert states.shape[-2] == self.n_bandits
         return torch.randint(self.n_bandits, size=states.shape[:-2], device=states.device)
 
 

@@ -18,7 +18,7 @@ import vectorized_agents as va
 class A3CVectorized:
     def __init__(self, model_constructor, optimizer, model=None, device=torch.device('cuda'),
                  exp_folder=Path('runs/a3c/TEMP'),
-                 recurrent_model=False, clip_grads=10.,
+                 recurrent_model=False, clip_grads=10., log_params_full=False,
                  play_against_past_selves=True, n_past_selves=4, checkpoint_freq=10, initial_opponent_pool=[],
                  opp_posterior_decay=0.95):
         self.model_constructor = model_constructor
@@ -29,8 +29,7 @@ class A3CVectorized:
             self.model = model
         self.device = device
         self.exp_folder = exp_folder.absolute()
-        if str(self.exp_folder) in ('/Windows/Users/isaia/Documents/GitHub/Kaggle/Santa_2020/runs/a3c/TEMP',
-                                    '/home/pressmi/github_misc/Kaggle_Santa_2020/runs/a3c/TEMP'):
+        if self.exp_folder.name == 'TEMP':
             print('WARNING: Using TEMP exp_folder')
             if self.exp_folder.exists():
                 shutil.rmtree(self.exp_folder)
@@ -53,6 +52,7 @@ class A3CVectorized:
         self.checkpoints = []
         self.true_ep_num = 0
         self.summary_writer = None
+        self.log_params_full = log_params_full
 
         if self.clip_grads is not None:
             if self.clip_grads <= 0:
@@ -84,7 +84,7 @@ class A3CVectorized:
             step_count = 1
             a, (l, v) = self.model.sample_action(next_s.to(device=self.device).unsqueeze(0), train=True)
             while not self.env.done:
-                next_s, r, done, _ = self.env.step(a.squeeze(0))
+                next_s, r, done, info_dict = self.env.step(a.squeeze(0))
 
                 buffer_a.append(a)
                 buffer_r.append(r)
@@ -110,15 +110,14 @@ class A3CVectorized:
                     buffer_v_target.reverse()
 
                     actions = torch.cat(buffer_a).to(device=self.device)
-                    v_t = torch.stack(buffer_v_target).to(device=self.device)
+                    v_t = torch.stack(buffer_v_target).to(device=self.device).detach()
                     logits = torch.cat(buffer_l).to(device=self.device)
                     values = torch.cat(buffer_v).to(device=self.device)
                     # print(f'actions.shape: {actions.shape}, v_t.shape: {v_t.shape}')
-
                     # print(f'logits.shape: {logits.shape}, values.shape: {values.shape}')
                     td = v_t - values
                     # Huber loss
-                    critic_loss = F.smooth_l1_loss(v_t, values, reduction='none').view(-1)
+                    critic_loss = F.smooth_l1_loss(values, v_t, reduction='none').view(-1)
 
                     probs = F.softmax(logits, dim=-1)
                     real_batch_size, n_envs, n_players, n_bandits = probs.shape
@@ -147,7 +146,8 @@ class A3CVectorized:
             self.log(
                 episode_reward_sums.mean().clone().cpu() / self.env.r_norm,
                 torch.stack(actor_losses),
-                torch.stack(critic_losses)
+                torch.stack(critic_losses),
+                info_dict
             )
             self.true_ep_num += 1
         self.save(finished=True)
@@ -243,24 +243,79 @@ class A3CVectorized:
             })
             df.to_csv(f'{file_path_base}_skill_estimates.csv')
 
-    def log(self, episode_reward_sums, actor_losses, critic_losses):
+    def log(self, episode_reward_sums, actor_losses, critic_losses, final_info_dict):
         # Lazily initialize summary_writer
         if self.summary_writer is None:
             self.summary_writer = SummaryWriter(self.exp_folder)
-        self.summary_writer.add_scalar('episode/reward', episode_reward_sums.numpy().item(), self.true_ep_num)
-        self.summary_writer.add_scalar('episode/actor_loss', actor_losses.mean().numpy().item(), self.true_ep_num)
-        self.summary_writer.add_scalar('episode/critic_loss', critic_losses.mean().numpy().item(), self.true_ep_num)
+        self.summary_writer.add_scalar('Episode/reward', episode_reward_sums.numpy().item(), self.true_ep_num)
+        self.summary_writer.add_scalar('Episode/actor_loss', actor_losses.mean().numpy().item(), self.true_ep_num)
+        self.summary_writer.add_scalar('Episode/critic_loss', critic_losses.mean().numpy().item(), self.true_ep_num)
+
         assert len(actor_losses) == len(critic_losses)
         for i, (a_l, c_l) in enumerate(zip(actor_losses.numpy(), critic_losses.numpy())):
             batch_num = self.true_ep_num * len(actor_losses) + i
-            self.summary_writer.add_scalar('batch/actor_loss', a_l.item(), batch_num)
-            self.summary_writer.add_scalar('batch/critic_loss', c_l.item(), batch_num)
+            self.summary_writer.add_scalar('Batch/actor_loss', a_l.item(), batch_num)
+            self.summary_writer.add_scalar('Batch/critic_loss', c_l.item(), batch_num)
+
+        if self.env.opponent is None:
+            pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)
+        else:
+            pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0]
+        self.summary_writer.add_histogram(
+            'Episode/agent_pull_rewards',
+            pull_rewards_sum,
+            self.true_ep_num
+        )
+        self.summary_writer.add_histogram(
+            'Episode/p1_pull_rewards',
+            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].numpy(),
+            self.true_ep_num
+        )
+        self.summary_writer.add_histogram(
+            'Episode/p2_pull_rewards',
+            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 1].numpy(),
+            self.true_ep_num
+        )
+        self.summary_writer.add_scalar(
+            'Episode/mean_agent_pull_rewards',
+            pull_rewards_sum.mean().numpy().item(),
+            self.true_ep_num
+        )
+        self.summary_writer.add_scalar(
+            'Episode/mean_p1_pull_rewards',
+            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].mean().numpy().item(),
+            self.true_ep_num
+        )
+        self.summary_writer.add_scalar(
+            'Episode/mean_p2_pull_rewards',
+            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 1].mean().numpy().item(),
+            self.true_ep_num
+        )
+
         if self.true_ep_num % self.checkpoint_freq == 0:
             for name, param in self.model.named_parameters():
                 if param.requires_grad:
-                    self.summary_writer.add_histogram(f'params/{name}',
-                                                      param.clone().cpu().data.numpy(),
-                                                      self.true_ep_num)
+                    self.summary_writer.add_scalar(
+                        f'Params/{name}_mean_magnitude',
+                        param.detach().cpu().clone().abs().mean().numpy().item(),
+                        self.true_ep_num
+                    )
+                    if param.view(-1).shape[0] > 1:
+                        self.summary_writer.add_scalar(
+                            f'Params/{name}_standard_deviation',
+                            param.detach().cpu().clone().std().numpy().item(),
+                            self.true_ep_num
+                        )
+                    else:
+                        self.summary_writer.add_scalar(
+                            f'Params/{name}_standard_deviation',
+                            0.,
+                            self.true_ep_num
+                        )
+                    if self.log_params_full:
+                        self.summary_writer.add_histogram(f'Params/{name}',
+                                                          param.clone().cpu().data.numpy(),
+                                                          self.true_ep_num)
 
     def get_opponent(self, idx):
         if idx < 0:
