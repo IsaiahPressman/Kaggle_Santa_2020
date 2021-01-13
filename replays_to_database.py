@@ -145,7 +145,7 @@ def load_s_a_r_d_s(replay_database_dir):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Process a list of JSON replay files and create .pt files to easily load into '
-                    'awac.ReplayBuffer. The output is less disk-efficient, but much faster to load.'
+                    'awac.BasicReplayBuffer. The output is less disk-efficient, but much faster to load.'
     )
     parser.add_argument(
         'save_dir',

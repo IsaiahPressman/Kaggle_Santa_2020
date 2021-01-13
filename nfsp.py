@@ -93,8 +93,7 @@ class NFSPVectorized:
             raise ValueError(f'Duplicate opponents encountered in validation_env_kwargs_dicts : {opponent_names}')
         self.device = device
         self.exp_folder = exp_folder.absolute()
-        if str(self.exp_folder) in ('/Windows/Users/isaia/Documents/GitHub/Kaggle/Santa_2020/runs/nfsp/TEMP',
-                                    '/home/pressmi/github_misc/Kaggle_Santa_2020/runs/nfsp/TEMP'):
+        if self.exp_folder.name == 'TEMP':
             print('\nWARNING: Using TEMP exp_folder')
             if self.exp_folder.exists():
                 shutil.rmtree(self.exp_folder)

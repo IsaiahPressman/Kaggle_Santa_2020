@@ -39,8 +39,7 @@ class AWACVectorized:
         self.deterministic_validation_policy = deterministic_validation_policy
         self.device = device
         self.exp_folder = exp_folder.absolute()
-        if str(self.exp_folder) in ('/Windows/Users/isaia/Documents/GitHub/Kaggle/Santa_2020/runs/awac/TEMP',
-                                    '/home/pressmi/github_misc/Kaggle_Santa_2020/runs/awac/TEMP'):
+        if self.exp_folder.name == 'TEMP':
             print('WARNING: Using TEMP exp_folder')
             if self.exp_folder.exists():
                 shutil.rmtree(self.exp_folder)
@@ -83,6 +82,7 @@ class AWACVectorized:
         self.run_validation()
         print(f'\nRunning main training loop with {n_epochs} epochs')
         for epoch in range(n_epochs):
+            epoch_start_time = time.time()
             self.model.eval()
             print(f'Epoch #{epoch}:')
             print(f'Sampling {n_steps_per_epoch} time-steps from the environment')
@@ -99,10 +99,10 @@ class AWACVectorized:
                     torch.ones(r.shape).view(-1) if done else torch.zeros(r.shape).view(-1),
                     next_s.view(-1, *next_s.shape[-2:]).cpu().clone()
                 )
-                self.summary_writer.add_scalar(f'DEBUG/replay_buffer_size',
+                self.summary_writer.add_scalar(f'Info/replay_buffer_size',
                                                len(self.replay_buffer),
                                                self.train_step_counter)
-                self.summary_writer.add_scalar(f'DEBUG/replay_buffer__top',
+                self.summary_writer.add_scalar(f'Info/replay_buffer__top',
                                                self.replay_buffer._top,
                                                self.train_step_counter)
                 s = next_s
@@ -115,7 +115,7 @@ class AWACVectorized:
                     self.episode_counter += 1
                     s, r, done, info_dict = self.env.reset()
                     episode_reward_sums = r
-                self.summary_writer.add_scalar('time/exploration_step_time_ms',
+                self.summary_writer.add_scalar('Time/exploration_step_time_ms',
                                                (time.time() - start_time) * 1000,
                                                self.train_step_counter)
                 self.train_step_counter += 1
@@ -130,6 +130,9 @@ class AWACVectorized:
             if self.epoch_counter % self.checkpoint_freq == 0:
                 self.run_validation()
                 self.save()
+            self.summary_writer.add_scalar('Time/epoch_time_minutes',
+                                           (time.time() - epoch_start_time) / 60.,
+                                           self.epoch_counter - 1)
             print()
         self.save(finished=True)
 
@@ -159,21 +162,21 @@ class AWACVectorized:
         total_loss.backward()
         self.optimizer.step()
         self.log_batch(actor_loss.mean(), critic_loss.mean(), total_loss)
-        self.summary_writer.add_scalar('time/batch_time_ms',
+        self.summary_writer.add_scalar('Time/batch_time_ms',
                                        (time.time() - start_time) * 1000,
                                        self.batch_counter)
         self.batch_counter += 1
 
     def log_batch(self, actor_loss, critic_loss, total_loss):
-        self.summary_writer.add_scalar('batch/actor_loss', actor_loss.detach().cpu().numpy().item(),
+        self.summary_writer.add_scalar('Batch/actor_loss', actor_loss.detach().cpu().numpy().item(),
                                        self.batch_counter)
-        self.summary_writer.add_scalar('batch/critic_loss', critic_loss.detach().cpu().numpy().item(),
+        self.summary_writer.add_scalar('Batch/critic_loss', critic_loss.detach().cpu().numpy().item(),
                                        self.batch_counter)
-        self.summary_writer.add_scalar('batch/total_loss', total_loss.detach().cpu().numpy().item(),
+        self.summary_writer.add_scalar('Batch/total_loss', total_loss.detach().cpu().numpy().item(),
                                        self.batch_counter)
 
     def log_train_episode(self, episode_reward_sums, final_info_dict):
-        self.summary_writer.add_scalar(f'episode/reward_{self.env.reward_type}',
+        self.summary_writer.add_scalar(f'Episode/reward_{self.env.reward_type}',
                                        episode_reward_sums.numpy().item(),
                                        self.episode_counter)
         if self.env.opponent is None:
@@ -181,32 +184,32 @@ class AWACVectorized:
         else:
             pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0]
         self.summary_writer.add_histogram(
-            'episode/agent_pull_rewards',
+            'Episode/agent_pull_rewards',
             pull_rewards_sum,
             self.episode_counter
         )
         self.summary_writer.add_histogram(
-            'episode/p1_pull_rewards',
+            'Episode/p1_pull_rewards',
             final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].numpy(),
             self.episode_counter
         )
         self.summary_writer.add_histogram(
-            'episode/p2_pull_rewards',
+            'Episode/p2_pull_rewards',
             final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 1].numpy(),
             self.episode_counter
         )
         self.summary_writer.add_scalar(
-            'episode/mean_agent_pull_rewards',
+            'Episode/mean_agent_pull_rewards',
             pull_rewards_sum.mean().numpy().item(),
             self.episode_counter
         )
         self.summary_writer.add_scalar(
-            'episode/mean_p1_pull_rewards',
+            'Episode/mean_p1_pull_rewards',
             final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].mean().numpy().item(),
             self.episode_counter
         )
         self.summary_writer.add_scalar(
-            'episode/mean_p2_pull_rewards',
+            'Episode/mean_p2_pull_rewards',
             final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 1].mean().numpy().item(),
             self.episode_counter
         )
@@ -230,33 +233,33 @@ class AWACVectorized:
             env_name = opponent
 
             self.summary_writer.add_histogram(
-                f'validation/{env_name}_game_results',
+                f'Validation/{env_name}_game_results',
                 ers.numpy(),
                 self.validation_counter
             )
             self.summary_writer.add_histogram(
-                f'validation/{env_name}_hero_pull_rewards',
+                f'Validation/{env_name}_hero_pull_rewards',
                 fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 0].numpy(),
                 self.validation_counter
             )
             self.summary_writer.add_histogram(
-                f'validation/{env_name}_villain_pull_rewards',
+                f'Validation/{env_name}_villain_pull_rewards',
                 fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 1].numpy(),
                 self.validation_counter
             )
             self.summary_writer.add_scalar(
-                f'validation/{env_name}_win_percent',
+                f'Validation/{env_name}_win_percent',
                 # W/D/L values are 1/0/-1, so they need to be scaled to 1/0.5/0 to be represented as a percent
                 (ers.mean().numpy().item() + 1) / 2. * 100.,
                 self.validation_counter
             )
             self.summary_writer.add_scalar(
-                f'validation/{env_name}_mean_hero_pull_rewards',
+                f'Validation/{env_name}_mean_hero_pull_rewards',
                 fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 0].mean().numpy().item(),
                 self.validation_counter
             )
             self.summary_writer.add_scalar(
-                f'validation/{env_name}_mean_villain_pull_rewards',
+                f'Validation/{env_name}_mean_villain_pull_rewards',
                 fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 1].mean().numpy().item(),
                 self.validation_counter
             )
@@ -283,7 +286,7 @@ class AWACVectorized:
                     next_s, r, done, info_dict = val_env.step(a.squeeze(0))
                     s = next_s
                     episode_reward_sums[-1] += r
-                    self.summary_writer.add_scalar(f'time/val_env{i}_step_time_ms',
+                    self.summary_writer.add_scalar(f'Time/val_env{i}_step_time_ms',
                                                    (time.time() - start_time) * 1000,
                                                    self.validation_step_counters[i])
                     self.validation_step_counters[i] += 1
@@ -311,7 +314,7 @@ class AWACVectorized:
         self.model.to(device=self.device)
 
 
-class ReplayBuffer:
+class BasicReplayBuffer:
     def __init__(self, s_shape, max_len=1e6, starting_s_a_r_d_s=None):
         self.max_len = int(max_len)
         self._s_buffer = torch.zeros(self.max_len, *s_shape)
@@ -348,8 +351,8 @@ class ReplayBuffer:
         batch_len = s_batch.shape[0]
         assert a_batch.shape[0] == batch_len
         assert r_batch.shape[0] == batch_len
-        assert next_s_batch.shape[0] == batch_len
         assert d_batch.shape[0] == batch_len
+        assert next_s_batch.shape[0] == batch_len
         new_len = self._top + batch_len
         if new_len <= self.max_len:
             self._s_buffer[self._top:new_len] = s_batch
@@ -379,3 +382,120 @@ class ReplayBuffer:
 
     def __len__(self):
         return self.current_size
+
+
+class EveryStepObsReplayBuffer:
+    def __init__(self, s_shape, max_len=1e6, is_ravelled=True,
+                 env_n_steps=1999, starting_s_a_r_d_s=None):
+        self.max_len = int(max_len - (max_len % env_n_steps))
+        self.is_ravelled = is_ravelled
+        self.env_n_steps = env_n_steps
+        self._max_len_full_obs = self.max_len // self.env_n_steps
+        self._full_observations = [torch.zeros(*s_shape, dtype=torch.float) for _ in range(self._max_len_full_obs)]
+        self._a_buffer = torch.zeros(self.max_len)
+        self._r_buffer = torch.zeros(self.max_len)
+        self._d_buffer = torch.zeros(self.max_len)
+        self._a_batch_cache = []
+        self._r_batch_cache = []
+        self._d_batch_cache = []
+        self._full_observations_top = 0
+        if starting_s_a_r_d_s is not None:
+            raise ValueError('starting_s_a_r_d_s is not yet implemented')
+
+    def get_samples_batch(self, sample_size):
+        # Sampling with replacement
+        idxs = np.random.randint(len(self), size=(sample_size,))
+
+        return (self._get_s(idxs),
+                self._a_buffer[idxs],
+                self._r_buffer[idxs],
+                self._d_buffer[idxs],
+                self._get_next_s(idxs))
+
+    def append_samples_batch(self, s_batch, a_batch, r_batch, d_batch, next_s_batch):
+        self._a_batch_cache.append(a_batch)
+        self._r_batch_cache.append(r_batch)
+        self._d_batch_cache.append(d_batch)
+        if d_batch.to(dtype=torch.bool).all():
+            batch_len = s_batch.shape[0]
+            assert next_s_batch.shape[0] == batch_len
+            a_batch = torch.stack(self._a_batch_cache, dim=-1)
+            r_batch = torch.stack(self._r_batch_cache, dim=-1)
+            d_batch = torch.stack(self._d_batch_cache, dim=-1)
+            assert a_batch.shape == (batch_len, self.env_n_steps)
+            assert r_batch.shape == (batch_len, self.env_n_steps)
+            assert d_batch.shape == (batch_len, self.env_n_steps)
+            self._a_batch_cache = []
+            self._r_batch_cache = []
+            self._d_batch_cache = []
+            a_batch = a_batch.view(-1)
+            r_batch = r_batch.view(-1)
+            d_batch = d_batch.view(-1)
+            new_num_full_observations = self._full_observations_top + batch_len
+            if new_num_full_observations <= self._max_len_full_obs:
+                a_r_d_top = len(self)
+                new_a_r_d_len = new_num_full_observations * self.env_n_steps
+                for full_s in next_s_batch:
+                    self._full_observations[self._full_observations_top] = full_s
+                    self._full_observations_top = (self._full_observations_top + 1) % self._max_len_full_obs
+                self._a_buffer[a_r_d_top:new_a_r_d_len] = a_batch
+                self._r_buffer[a_r_d_top:new_a_r_d_len] = r_batch
+                self._d_buffer[a_r_d_top:new_a_r_d_len] = d_batch
+            else:
+                a_r_d_top = len(self)
+                a_r_d_cut = (self.max_len - a_r_d_top)
+                idx = 0
+                while self._full_observations_top != 0:
+                    self._full_observations[self._full_observations_top] = next_s_batch[idx]
+                    self._full_observations_top = (self._full_observations_top + 1) % self._max_len_full_obs
+                    idx += 1
+                self._a_buffer[a_r_d_top:self.max_len] = a_batch[:a_r_d_cut]
+                self._r_buffer[a_r_d_top:self.max_len] = r_batch[:a_r_d_cut]
+                self._d_buffer[a_r_d_top:self.max_len] = d_batch[:a_r_d_cut]
+
+                a_r_d_top = self._full_observations_top * self.env_n_steps
+                new_a_r_d_len = (new_num_full_observations * self.env_n_steps) % self.max_len
+                while idx != 0:
+                    self._full_observations[self._full_observations_top] = next_s_batch[idx]
+                    self._full_observations_top = (self._full_observations_top + 1) % self._max_len_full_obs
+                    idx = (idx + 1) % batch_len
+                self._a_buffer[a_r_d_top:self.max_len] = a_batch[a_r_d_cut:]
+                self._r_buffer[a_r_d_top:self.max_len] = r_batch[a_r_d_cut:]
+                self._d_buffer[a_r_d_top:self.max_len] = d_batch[a_r_d_cut:]
+
+    def _get_s(self, idxs):
+        states = []
+        for i in idxs:
+            full_obs_index = int(i // self.env_n_steps)
+            step_idx = int(i % self.env_n_steps)
+            states.append(self._get_obs(full_obs_index, step_idx))
+        return torch.stack(states, dim=0)
+
+    def _get_next_s(self, idxs):
+        states = []
+        for i in idxs:
+            full_obs_index = int(i // self.env_n_steps)
+            step_idx = int(i % self.env_n_steps)
+            states.append(self._get_obs(full_obs_index, step_idx + 1))
+        return torch.stack(states, dim=0)
+
+    def _get_obs(self, full_obs_index, step_idx):
+        full_obs = self._full_observations[full_obs_index]
+        orig_shape = full_obs.shape
+        if self.is_ravelled:
+            full_obs = full_obs.view(*full_obs.shape[:-1], self.env_n_steps, -1)
+        mask = torch.where(
+            torch.arange(self.env_n_steps) < step_idx,
+            torch.ones(self.env_n_steps, dtype=full_obs.dtype),
+            torch.zeros(self.env_n_steps, dtype=full_obs.dtype)
+        ).view(1, self.env_n_steps, 1)
+        full_obs = full_obs * mask
+        return full_obs.view(*orig_shape) if self.is_ravelled else full_obs
+
+    def __len__(self):
+        return self._full_observations_top * self.env_n_steps
+
+    # Only used for logging compatibility
+    @property
+    def _top(self):
+        return self._full_observations_top
