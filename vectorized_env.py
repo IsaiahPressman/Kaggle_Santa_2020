@@ -8,6 +8,7 @@ END_OF_GAME_TRUE = 'end_of_game_true'
 # END_OF_GAME_EV = 3
 
 SUMMED_OBS = 'summed_obs'
+SUMMED_OBS_NOISE='summed_obs_noise'
 SUMMED_OBS_WITH_TIMESTEP = 'summed_obs_with_timestep'
 LAST_STEP_OBS = 'last_step_obs'
 # ONEHOT_OBS = 2
@@ -22,7 +23,8 @@ REWARD_TYPES = (
 OBS_TYPES = (
     SUMMED_OBS,
     SUMMED_OBS_WITH_TIMESTEP,
-    LAST_STEP_OBS
+    LAST_STEP_OBS,
+    SUMMED_OBS_NOISE
 )
 
 
@@ -81,13 +83,13 @@ class KaggleMABEnvTorchVectorized:
         self.env_device = env_device
         self.out_device = out_device
 
-        if self.obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP):
+        if self.obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP,SUMMED_OBS_NOISE):
             self.obs_norm = self.n_bandits / self.n_steps
         elif self.obs_type == LAST_STEP_OBS:
             self.obs_norm = 1.
         else:
             raise ValueError(f'Unsupported obs_type: {self.obs_type}')
-        if self.opponent_obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP):
+        if self.opponent_obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP,SUMMED_OBS_NOISE):
             self.opponent_obs_norm = self.n_bandits / self.n_steps
         elif self.opponent_obs_type == LAST_STEP_OBS:
             self.opponent_obs_norm = 1.
@@ -148,6 +150,8 @@ class KaggleMABEnvTorchVectorized:
                 opp_obs = self._get_summed_obs() * self.opponent_obs_norm
             elif self.opponent_obs_type == SUMMED_OBS_WITH_TIMESTEP:
                 opp_obs = self._get_summed_obs_with_timestep() * self.opponent_obs_norm
+            elif self.opponent_obs_type == SUMMED_OBS_NOISE:
+                opp_obs = self._get_summed_obs_noise() * self.opponent_obs_norm
             elif self.opponent_obs_type == LAST_STEP_OBS:
                 opp_obs = self._get_last_step_obs() * self.opponent_obs_norm
             else:
@@ -224,6 +228,8 @@ class KaggleMABEnvTorchVectorized:
             obs = self._get_summed_obs()
         elif self.obs_type == SUMMED_OBS_WITH_TIMESTEP:
             obs = self._get_summed_obs_with_timestep()
+        elif self.obs_type == SUMMED_OBS_NOISE:
+            obs = self._get_summed_obs_noise() 
         elif self.obs_type == LAST_STEP_OBS:
             obs = self._get_last_step_obs()
         else:
@@ -251,6 +257,30 @@ class KaggleMABEnvTorchVectorized:
             ], dim=-1)
         return obs.detach()
 
+    def _get_summed_obs_noise(self):
+        # Reshape player_n_pulls such that each player receives a tensor of shape (1,1,n_bandits,n_players)
+        # The overall obs tensor is then of shape (1,1,n_bandits,n_players+2) (including rewards and timestep)
+        # The final axis contains the player's num_pulls first and other player actions listed afterwards
+        # This is currently not implemented for more than 2 players
+        noise=torch.randn((self.n_envs, self.n_players, self.n_bandits),device=self.env_device)
+        if self.n_players == 1:
+            obs = torch.stack([
+                self.player_n_pulls,
+                self.player_rewards_sums,
+                timestep_broadcasted
+            ], dim=-1)
+        else:
+            player_n_pulls_player_relative = torch.stack([
+                self.player_n_pulls,
+                self.player_n_pulls[:, [1, 0], :]
+            ], dim=-1)
+            obs = torch.cat([
+                player_n_pulls_player_relative,
+                self.player_rewards_sums.unsqueeze(-1),
+                noise.unsqueeze(-1)
+            ], dim=-1)
+        return obs.detach()
+    
     def _get_summed_obs_with_timestep(self):
         # Reshape player_n_pulls such that each player receives a tensor of shape (1,1,n_bandits,n_players)
         # The overall obs tensor is then of shape (1,1,n_bandits,n_players+2) (including rewards and timestep)

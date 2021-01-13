@@ -85,7 +85,6 @@ class A3CVectorized:
             a, (l, v) = self.model.sample_action(next_s.to(device=self.device).unsqueeze(0), train=True)
             while not self.env.done:
                 next_s, r, done, _ = self.env.step(a.squeeze(0))
-
                 buffer_a.append(a)
                 buffer_r.append(r)
                 buffer_l.append(l)
@@ -94,7 +93,6 @@ class A3CVectorized:
                 if self.recurrent_model and (step_count % batch_size == 0 or done):
                     self.model.detach_hidden_states()
                 a, (l, v) = self.model.sample_action(next_s.to(device=self.device).unsqueeze(0), train=True)
-
                 if step_count % batch_size == 0 or done:
                     if done:
                         v_next_s = torch.zeros_like(buffer_r[-1])
@@ -110,9 +108,10 @@ class A3CVectorized:
                     buffer_v_target.reverse()
 
                     actions = torch.cat(buffer_a).to(device=self.device)
-                    v_t = torch.stack(buffer_v_target).to(device=self.device)
+                    v_t = torch.stack(buffer_v_target).float().to(device=self.device)
                     logits = torch.cat(buffer_l).to(device=self.device)
                     values = torch.cat(buffer_v).to(device=self.device)
+                    #print(actions.dtype,v_t.dtype,logits.dtype,values.dtype)
                     # print(f'actions.shape: {actions.shape}, v_t.shape: {v_t.shape}')
 
                     # print(f'logits.shape: {logits.shape}, values.shape: {values.shape}')

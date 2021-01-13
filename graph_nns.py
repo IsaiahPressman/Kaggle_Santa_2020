@@ -2,6 +2,45 @@ import torch
 from torch import distributions, nn
 import torch.nn.functional as F
 
+class AttentionGNNLayer(nn.Module):
+    def __init__(self, n_nodes, in_features, out_features,
+                 activation_func=nn.ReLU(), normalize=False, squeeze_out=False,nheads=2):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.activation_func = activation_func
+        self.normalize = normalize
+        self.squeeze_out=squeeze_out
+        self.nheads=nheads
+        inter=self.intermediate_size(in_features,nheads)
+        print(inter)
+        self.attn = nn.MultiheadAttention(inter, nheads)
+        if self.normalize:
+            self.norm_layer = nn.BatchNorm1d(out_features)
+        else:
+            self.norm_layer = None
+        self.to_q=nn.Conv1d(in_features,inter,1)
+        self.to_k=nn.Conv1d(in_features,inter,1)
+        self.to_v=nn.Conv1d(in_features,inter,1)
+        self.to_out=nn.Conv1d(inter,out_features,1)
+    def forward(self, features):
+        shape=features.shape
+        justbatch=features.reshape(-1,shape[-2],shape[-1]).permute(0,2,1) #reshapes to a single batch dimension
+        (q,k,v)=(self.to_q(justbatch),self.to_k(justbatch),self.to_v(justbatch))
+        (q,k,v)=(q.permute(2,0,1),k.permute(2,0,1),v.permute(2,0,1))
+        x=self.attn(q,k,v)[0]
+        x=x.permute(1,2,0)
+        x=self.to_out(x)
+        x=x.permute(0,2,1)
+        out=x.reshape(shape[0],shape[1],shape[2],shape[3],-1)
+        if self.squeeze_out:
+            return out.squeeze(dim=-1)
+        else:
+            return out
+    def intermediate_size(self,in_features,nheads):
+        return in_features+(-1*in_features)%nheads
+    def reset_hidden_states(self):
+        pass
+
 
 class FullyConnectedGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features,
