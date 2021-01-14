@@ -9,29 +9,29 @@ class AttentionGNNLayer(nn.Module):
         self.n_nodes = n_nodes
         self.activation_func = activation_func
         self.normalize = normalize
-        self.squeeze_out=squeeze_out
-        self.nheads=nheads
-        inter=self.intermediate_size(in_features,nheads)
-        print(inter)
+        self.squeeze_out = squeeze_out
+        self.nheads = nheads
+        inter = self.intermediate_size(in_features,nheads)
+        print(f'AttentionGNN inter: {inter}')
         self.attn = nn.MultiheadAttention(inter, nheads)
         if self.normalize:
             self.norm_layer = nn.BatchNorm1d(out_features)
         else:
             self.norm_layer = None
-        self.to_q=nn.Conv1d(in_features,inter,1)
-        self.to_k=nn.Conv1d(in_features,inter,1)
-        self.to_v=nn.Conv1d(in_features,inter,1)
-        self.to_out=nn.Conv1d(inter,out_features,1)
+        self.to_q = nn.Conv1d(in_features,inter,1)
+        self.to_k = nn.Conv1d(in_features,inter,1)
+        self.to_v = nn.Conv1d(in_features,inter,1)
+        self.to_out = nn.Conv1d(inter,out_features,1)
     def forward(self, features):
-        shape=features.shape
-        justbatch=features.reshape(-1,shape[-2],shape[-1]).permute(0,2,1) #reshapes to a single batch dimension
-        (q,k,v)=(self.to_q(justbatch),self.to_k(justbatch),self.to_v(justbatch))
-        (q,k,v)=(q.permute(2,0,1),k.permute(2,0,1),v.permute(2,0,1))
-        x=self.attn(q,k,v)[0]
-        x=x.permute(1,2,0)
-        x=self.to_out(x)
-        x=x.permute(0,2,1)
-        out=x.reshape(shape[0],shape[1],shape[2],shape[3],-1)
+        shape = features.shape
+        justbatch = features.view(-1, *shape[-2:]).permute(0,2,1) #reshapes to a single batch dimension
+        (q,k,v) = (self.to_q(justbatch), self.to_k(justbatch), self.to_v(justbatch))
+        (q,k,v) = (q.permute(2,0,1), k.permute(2,0,1), v.permute(2,0,1))
+        x = self.attn(q,k,v)[0]
+        x = x.permute(1,2,0)
+        x = self.to_out(x)
+        x = x.permute(0,2,1)
+        out = x.view(*shape[:4], -1)
         if self.squeeze_out:
             return out.squeeze(dim=-1)
         else:
