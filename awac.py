@@ -180,9 +180,9 @@ class AWACVectorized:
                                        episode_reward_sums.numpy().item(),
                                        self.episode_counter)
         if self.env.opponent is None:
-            pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)
+            pull_rewards_sum = final_info_dict['player_rewards_sums'].sum(dim=-1).cpu()
         else:
-            pull_rewards_sum = final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0]
+            pull_rewards_sum = final_info_dict['player_rewards_sums'].sum(dim=-1)[:, 0].cpu()
         self.summary_writer.add_histogram(
             'Episode/agent_pull_rewards',
             pull_rewards_sum,
@@ -190,12 +190,12 @@ class AWACVectorized:
         )
         self.summary_writer.add_histogram(
             'Episode/p1_pull_rewards',
-            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].numpy(),
+            final_info_dict['player_rewards_sums'].sum(dim=-1)[:, 0].cpu().numpy(),
             self.episode_counter
         )
         self.summary_writer.add_histogram(
             'Episode/p2_pull_rewards',
-            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 1].numpy(),
+            final_info_dict['player_rewards_sums'].sum(dim=-1)[:, 1].cpu().numpy(),
             self.episode_counter
         )
         self.summary_writer.add_scalar(
@@ -205,12 +205,12 @@ class AWACVectorized:
         )
         self.summary_writer.add_scalar(
             'Episode/mean_p1_pull_rewards',
-            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].mean().numpy().item(),
+            final_info_dict['player_rewards_sums'].sum(dim=-1)[:, 0].mean().cpu().numpy().item(),
             self.episode_counter
         )
         self.summary_writer.add_scalar(
             'Episode/mean_p2_pull_rewards',
-            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 1].mean().numpy().item(),
+            final_info_dict['player_rewards_sums'].sum(dim=-1)[:, 1].mean().cpu().numpy().item(),
             self.episode_counter
         )
 
@@ -239,12 +239,12 @@ class AWACVectorized:
             )
             self.summary_writer.add_histogram(
                 f'Validation/{env_name}_hero_pull_rewards',
-                fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 0].numpy(),
+                fid['player_rewards_sums'].sum(dim=-1)[:, 0].cpu().numpy(),
                 self.validation_counter
             )
             self.summary_writer.add_histogram(
                 f'Validation/{env_name}_villain_pull_rewards',
-                fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 1].numpy(),
+                fid['player_rewards_sums'].sum(dim=-1)[:, 1].cpu().numpy(),
                 self.validation_counter
             )
             self.summary_writer.add_scalar(
@@ -255,12 +255,12 @@ class AWACVectorized:
             )
             self.summary_writer.add_scalar(
                 f'Validation/{env_name}_mean_hero_pull_rewards',
-                fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 0].mean().numpy().item(),
+                fid['player_rewards_sums'].sum(dim=-1)[:, 0].mean().cpu().numpy().item(),
                 self.validation_counter
             )
             self.summary_writer.add_scalar(
                 f'Validation/{env_name}_mean_villain_pull_rewards',
-                fid['player_rewards_sums'].sum(dim=-1).cpu()[:, 1].mean().numpy().item(),
+                fid['player_rewards_sums'].sum(dim=-1)[:, 1].mean().cpu().numpy().item(),
                 self.validation_counter
             )
 

@@ -2,6 +2,7 @@ import torch
 from torch import distributions, nn
 import torch.nn.functional as F
 
+
 class AttentionGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features,
                  activation_func=nn.ReLU(), normalize=False, squeeze_out=False, nheads=2):
@@ -17,34 +18,36 @@ class AttentionGNNLayer(nn.Module):
             self.norm_layer = nn.BatchNorm1d(out_features)
         else:
             self.norm_layer = None
-        self.in_features=in_features
-        self.out_features=out_features
-        if(in_features==out_features):
+        self.in_features = in_features
+        self.out_features = out_features
+        if in_features == out_features:
             self.to_q = nn.Linear(in_features, inter)
             self.to_k = nn.Linear(in_features, inter)
             self.to_v = nn.Linear(in_features, inter)
             self.to_out = nn.Linear(inter, out_features)
-            self.feedforwarda=nn.Linear(out_features,out_features)
-            self.feedforwardb=nn.Linear(out_features,out_features)
+            self.feedforwarda = nn.Linear(out_features, out_features)
+            self.feedforwardb = nn.Linear(out_features, out_features)
         else:
-            self.lin=nn.Linear(in_features,out_features)
+            self.lin = nn.Linear(in_features, out_features)
         
     def forward(self, features):
-        if(self.in_features!=self.out_features):
-            out=self.lin(features)
+        if self.in_features != self.out_features:
+            out = self.lin(features)
         else:
             shape = features.shape
-            justbatch = features.view(-1, *shape[-2:]) #reshapes to a single batch dimension
+            justbatch = features.view(-1, *shape[-2:]) # reshapes to a single batch dimension
             (q, k, v) = (self.to_q(justbatch), self.to_k(justbatch), self.to_v(justbatch))
             (q, k, v) = (q.permute(1, 0, 2), k.permute(1, 0, 2), v.permute(1, 0, 2))
-            x = self.attn(q,k,v)[0]
+            x = self.attn(q, k, v)[0]
             x = x.permute(1, 0, 2)
             x = self.to_out(x)
-            mid=x+justbatch #residual connection part 1
-            x=self.feedforwarda(mid)
-            x=F.relu(x)
-            x=self.feedforwardb(x)
-            x=x+mid
+            mid = x+justbatch # residual connection part 1
+            x = self.feedforwarda(mid)
+            x = self.activation_func(x)
+            x = self.feedforwardb(x)
+            x = x+mid
+            if self.normalize:
+                x = self.norm_layer(x.transpose(1, 2)).transpose(1, 2)
             out = x.view(*shape[:-1], -1)
         if self.squeeze_out:
             return out.squeeze(dim=-1)
@@ -56,6 +59,7 @@ class AttentionGNNLayer(nn.Module):
 
     def reset_hidden_states(self):
         pass
+
 
 class SqueezeExictationGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features,
@@ -76,6 +80,7 @@ class SqueezeExictationGNNLayer(nn.Module):
             self.norm_layer = nn.BatchNorm1d(out_features)
         else:
             self.norm_layer = None
+
     def forward(self, features):
         shape=features.shape
         reshaped=features.reshape(-1,shape[-2],shape[-1])
@@ -91,8 +96,10 @@ class SqueezeExictationGNNLayer(nn.Module):
             return out.squeeze(dim=-1)
         else:
             return out
+
     def reset_hidden_states(self):
         pass
+
 
 class FullyConnectedGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features,
