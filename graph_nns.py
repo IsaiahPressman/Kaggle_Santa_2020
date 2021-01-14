@@ -12,7 +12,6 @@ class AttentionGNNLayer(nn.Module):
         self.squeeze_out=squeeze_out
         self.nheads=nheads
         inter=self.intermediate_size(in_features,nheads)
-        print(inter)
         self.attn = nn.MultiheadAttention(inter, nheads)
         if self.normalize:
             self.norm_layer = nn.BatchNorm1d(out_features)
@@ -41,6 +40,37 @@ class AttentionGNNLayer(nn.Module):
     def reset_hidden_states(self):
         pass
 
+class SqueezeExictationGNNLayer(nn.Module):
+    def __init__(self, n_nodes, in_features, out_features,
+                 activation_func=nn.ReLU(), normalize=False, squeeze_out=False,nheads=2):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.activation_func = activation_func
+        self.normalize = normalize
+        self.squeeze_out=squeeze_out
+        self.conva=nn.Conv1d(in_features,out_features,1)
+        self.conva=nn.Conv1d(out_features,out_features,1)
+        self.lin=nn.Linear(out_features,out_features)
+        print(inter)
+        if self.normalize:
+            self.norm_layer = nn.BatchNorm1d(out_features)
+        else:
+            self.norm_layer = None
+    def forward(self, features):
+        shape=features.shape
+        reshaped=features.reshape(-1,shape[-2],shape[-1]).permute(0,2,1) 
+        x=self.conva(F.relu(reshaped))
+        x=self.convb(F.relu(x))
+        summed=torch.mean(x,dim=2)
+        weighters=torch.sigmoid(self.lin(summed)).unsqueeze(dim=-1)
+        x=x*weighters
+        out=x.permute(0,2,1).reshape(shape[0],shape[1],shape[2],shape[3],-1)
+        if self.squeeze_out:
+            return out.squeeze(dim=-1)
+        else:
+            return out
+    def reset_hidden_states(self):
+        pass
 
 class FullyConnectedGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features,
