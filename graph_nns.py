@@ -4,39 +4,41 @@ import torch.nn.functional as F
 
 class AttentionGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features,
-                 activation_func=nn.ReLU(), normalize=False, squeeze_out=False,nheads=2):
+                 activation_func=nn.ReLU(), normalize=False, squeeze_out=False, nheads=2):
         super().__init__()
         self.n_nodes = n_nodes
         self.activation_func = activation_func
         self.normalize = normalize
-        self.squeeze_out=squeeze_out
-        self.nheads=nheads
-        inter=self.intermediate_size(in_features,nheads)
+        self.squeeze_out = squeeze_out
+        self.nheads = nheads
+        inter = self.intermediate_size(in_features,nheads)
         self.attn = nn.MultiheadAttention(inter, nheads)
         if self.normalize:
             self.norm_layer = nn.BatchNorm1d(out_features)
         else:
             self.norm_layer = None
-        self.to_q=nn.Conv1d(in_features,inter,1)
-        self.to_k=nn.Conv1d(in_features,inter,1)
-        self.to_v=nn.Conv1d(in_features,inter,1)
-        self.to_out=nn.Conv1d(inter,out_features,1)
+        self.to_q = nn.Linear(in_features, inter)
+        self.to_k = nn.Linear(in_features, inter)
+        self.to_v = nn.Linear(in_features, inter)
+        self.to_out = nn.Linear(inter, out_features)
+
     def forward(self, features):
-        shape=features.shape
-        justbatch=features.reshape(-1,shape[-2],shape[-1]).permute(0,2,1) #reshapes to a single batch dimension
-        (q,k,v)=(self.to_q(justbatch),self.to_k(justbatch),self.to_v(justbatch))
-        (q,k,v)=(q.permute(2,0,1),k.permute(2,0,1),v.permute(2,0,1))
-        x=self.attn(q,k,v)[0]
-        x=x.permute(1,2,0)
-        x=self.to_out(x)
-        x=x.permute(0,2,1)
-        out=x.reshape(shape[0],shape[1],shape[2],shape[3],-1)
+        shape = features.shape
+        justbatch = features.view(-1, *shape[-2:]) #reshapes to a single batch dimension
+        (q, k, v) = (self.to_q(justbatch), self.to_k(justbatch), self.to_v(justbatch))
+        (q, k, v) = (q.permute(1, 0, 2), k.permute(1, 0, 2), v.permute(1, 0, 2))
+        x = self.attn(q,k,v)[0]
+        x = x.permute(1, 0, 2)
+        x = self.to_out(x)
+        out = x.view(*shape[:-1], -1)
         if self.squeeze_out:
             return out.squeeze(dim=-1)
         else:
             return out
-    def intermediate_size(self,in_features,nheads):
-        return in_features+(-1*in_features)%nheads
+
+    def intermediate_size(self, in_features, nheads):
+        return in_features + (-1 * in_features) % nheads
+
     def reset_hidden_states(self):
         pass
 
@@ -48,10 +50,11 @@ class SqueezeExictationGNNLayer(nn.Module):
         self.activation_func = activation_func
         self.normalize = normalize
         self.squeeze_out=squeeze_out
+        self.in_features=in_features
+        self.out_features=out_features
         self.conva=nn.Conv1d(in_features,out_features,1)
-        self.conva=nn.Conv1d(out_features,out_features,1)
+        self.convb=nn.Conv1d(out_features,out_features,1)
         self.lin=nn.Linear(out_features,out_features)
-        print(inter)
         if self.normalize:
             self.norm_layer = nn.BatchNorm1d(out_features)
         else:
@@ -59,11 +62,14 @@ class SqueezeExictationGNNLayer(nn.Module):
     def forward(self, features):
         shape=features.shape
         reshaped=features.reshape(-1,shape[-2],shape[-1]).permute(0,2,1) 
-        x=self.conva(F.relu(reshaped))
+        x=F.relu(reshaped)
+        x=self.conva(x)
         x=self.convb(F.relu(x))
         summed=torch.mean(x,dim=2)
         weighters=torch.sigmoid(self.lin(summed)).unsqueeze(dim=-1)
         x=x*weighters
+        if(self.normalize):
+            x=self.norm_layer(x)
         out=x.permute(0,2,1).reshape(shape[0],shape[1],shape[2],shape[3],-1)
         if self.squeeze_out:
             return out.squeeze(dim=-1)

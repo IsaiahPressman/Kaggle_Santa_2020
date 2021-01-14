@@ -16,9 +16,9 @@ OBS_NORM = 100. / 1999.
 graph_nn_kwargs = dict(
     in_features=3,
     n_nodes=100,
-    n_hidden_layers=4,
+    n_hidden_layers=2,
     layer_sizes=16,
-    layer_class=gnn.AttentionGNNLayer,#gnn.FullyConnectedGNNLayer,
+    layer_class=gnn.SqueezeExictationGNNLayer,#gnn.FullyConnectedGNNLayer,
     normalize=False,
     skip_connection_n=1 
 )
@@ -39,7 +39,7 @@ env_kwargs = dict(
     normalize_reward=False,
     reward_type=ve.EVERY_STEP_EV_ZEROSUM,
     obs_type=ve.SUMMED_OBS,
-    opponent_obs_type=ve.SUMMED_OBS
+    #opponent_obs_type=ve.SUMMED_OBS
 )
 rl_alg_kwargs = dict(
     batch_size=30,
@@ -65,8 +65,8 @@ initial_opponent_pool = [
 ]
 
 #folder_name = f"small_{graph_nn_kwargs['n_hidden_layers']}_{graph_nn_kwargs['layer_sizes']}_v2"
-folder_name = 'ATTN2'
-a3c_alg = A3CVectorized(model_constructor, optimizer, model=model, device=DEVICE,
+folder_name = 'SE3'
+a3c_alg = A3CVectorized(model_constructor, optimizer, env_kwargs['obs_type'], model=model, device=DEVICE,
                         exp_folder=Path(f'runs/a3c/{folder_name}'),
                         recurrent_model=False,
                         clip_grads=10.,
@@ -76,7 +76,7 @@ a3c_alg = A3CVectorized(model_constructor, optimizer, model=model, device=DEVICE
                         initial_opponent_pool=initial_opponent_pool,
                         opp_posterior_decay=0.95)
 
-env_kwargs['n_envs'] = 30
+env_kwargs['n_envs'] = 150
 try:
     with torch.autograd.set_detect_anomaly(True):
         a3c_alg.train(n_episodes=1000, **rl_alg_kwargs, **env_kwargs)
