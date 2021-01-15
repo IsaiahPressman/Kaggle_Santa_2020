@@ -13,6 +13,11 @@ class AttentionGNNLayer(nn.Module):
         self.normalize = normalize
         self.squeeze_out = squeeze_out
         self.nheads = nheads
+        # Register nheads to prevent later accidentally loading the model with the wrong number of heads
+        self.register_nheads = nn.Parameter(
+            torch.zeros(self.nheads),
+            requires_grad=False
+        )
         inter = self.intermediate_size(in_features,nheads)
         self.attn = nn.MultiheadAttention(inter, nheads)
         if self.normalize:
@@ -47,9 +52,8 @@ class AttentionGNNLayer(nn.Module):
             mid = x + justbatch # residual connection part 1
             if self.normalize:
                 mid = self.norm_layer_1(mid.transpose(1, 2)).transpose(1, 2)
-            x = self.feedforwarda(mid)
-            x = self.activation_func(x)
-            x = self.feedforwardb(x)
+            x = self.activation_func(self.feedforwarda(mid))
+            x = self.activation_func(self.feedforwardb(x))
             x = x + mid
             if self.normalize:
                 x = self.norm_layer_2(x.transpose(1, 2)).transpose(1, 2)
