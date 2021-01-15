@@ -1,3 +1,4 @@
+from copy import copy
 import torch
 from torch import distributions, nn
 import torch.nn.functional as F
@@ -15,9 +16,11 @@ class AttentionGNNLayer(nn.Module):
         inter = self.intermediate_size(in_features,nheads)
         self.attn = nn.MultiheadAttention(inter, nheads)
         if self.normalize:
-            self.norm_layer = nn.BatchNorm1d(out_features)
+            self.norm_layer_1 = nn.BatchNorm1d(out_features)
+            self.norm_layer_2 = nn.BatchNorm1d(out_features)
         else:
-            self.norm_layer = None
+            self.norm_layer_1 = None
+            self.norm_layer_2 = None
         self.in_features = in_features
         self.out_features = out_features
         if in_features == out_features:
@@ -41,13 +44,15 @@ class AttentionGNNLayer(nn.Module):
             x = self.attn(q, k, v)[0]
             x = x.permute(1, 0, 2)
             x = self.to_out(x)
-            mid = x+justbatch # residual connection part 1
+            mid = x + justbatch # residual connection part 1
+            if self.normalize:
+                mid = self.norm_layer_1(mid.transpose(1, 2)).transpose(1, 2)
             x = self.feedforwarda(mid)
             x = self.activation_func(x)
             x = self.feedforwardb(x)
-            x = x+mid
+            x = x + mid
             if self.normalize:
-                x = self.norm_layer(x.transpose(1, 2)).transpose(1, 2)
+                x = self.norm_layer_2(x.transpose(1, 2)).transpose(1, 2)
             out = x.view(*shape[:-1], -1)
         if self.squeeze_out:
             return out.squeeze(dim=-1)
@@ -260,7 +265,7 @@ class GraphNNResidualBase(nn.Module):
         
 class GraphNNActorCritic(nn.Module):
     def __init__(self, in_features, n_nodes, n_hidden_layers, layer_sizes, layer_class,
-                 preprocessing_layer=False, activation_func=nn.ReLU(), skip_connection_n=1, normalize=False):
+                 preprocessing_layer=False, skip_connection_n=1, **layer_class_kwargs):
         super().__init__()
         
         # Define network
@@ -273,18 +278,21 @@ class GraphNNActorCritic(nn.Module):
                              f'was {len(layer_sizes)} but should have been {n_hidden_layers+1+preprocessing_layer}')
         if preprocessing_layer:
             layers = [nn.Sequential(nn.Linear(in_features, layer_sizes[0]),
-                                    activation_func),
-                      layer_class(n_nodes, layer_sizes[0], layer_sizes[1], activation_func=activation_func)]
+                                    layer_class_kwargs.get('activation_func', nn.ReLU())),
+                      layer_class(n_nodes, layer_sizes[0], layer_sizes[1], **layer_class_kwargs)]
         else:
-            layers = [layer_class(n_nodes, in_features, layer_sizes[0], activation_func=activation_func)]
+            layers = [layer_class(n_nodes, in_features, layer_sizes[0], **layer_class_kwargs)]
         for i in range(n_hidden_layers):
             layers.append(layer_class(n_nodes, layer_sizes[i+preprocessing_layer], layer_sizes[i+1+preprocessing_layer],
-                                      activation_func=activation_func, normalize=normalize))
+                                      **layer_class_kwargs))
         
         if skip_connection_n == 0:
             self.base = nn.Sequential(*layers)
         else:
             self.base = GraphNNResidualBase(layers, skip_connection_n)
+        layer_class_kwargs = copy(layer_class_kwargs)
+        layer_class_kwargs.pop('activation_func', None)
+        layer_class_kwargs.pop('normalize', None)
         self.actor = layer_class(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
         self.critic = layer_class(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
     
