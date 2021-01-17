@@ -69,6 +69,41 @@ class AttentionGNNLayer(nn.Module):
     def reset_hidden_states(self):
         pass
 
+class MaxAndMeanGNNLayer(nn.Module):
+    def __init__(self, n_nodes, in_features, out_features,
+                 activation_func=nn.ReLU(), normalize=False, squeeze_out=False,nheads=2):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.activation_func = activation_func
+        self.normalize = normalize
+        self.squeeze_out=squeeze_out
+        self.in_features=in_features
+        self.out_features=out_features
+        self.lina=nn.Linear(in_features,out_features)
+        self.linb=nn.Linear(out_features*3,out_features)
+        if self.normalize:
+            self.norm_layer = nn.BatchNorm1d(out_features)
+        else:
+            self.norm_layer = None
+
+    def forward(self, features):
+        shape=features.shape
+        reshaped=features.reshape(-1,shape[-2],shape[-1])
+        x=self.lina(F.relu(reshaped))
+        summed=torch.mean(x,dim=1,keepdim=True).expand(-1,100,-1)
+        maxed=(torch.max(x,dim=1,keepdim=True)[0]).expand(-1,100,-1)
+        x=torch.cat([x,summed,maxed],dim=2)
+        x=self.linb(F.relu(x))
+        if(self.normalize):
+            x=self.norm_layer(x.transpose(1, 2)).transpose(1, 2)
+        out=x.reshape(shape[0],shape[1],shape[2],shape[3],-1)
+        if self.squeeze_out:
+            return out.squeeze(dim=-1)
+        else:
+            return out
+
+    def reset_hidden_states(self):
+        pass
 
 class SqueezeExictationGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features,
@@ -82,8 +117,6 @@ class SqueezeExictationGNNLayer(nn.Module):
         self.out_features=out_features
         self.lina=nn.Linear(in_features,out_features)
         self.linb=nn.Linear(out_features,out_features)
-        self.conva=nn.Conv1d(in_features,out_features,1)
-        self.convb=nn.Conv1d(out_features,out_features,1)
         self.se_lin=nn.Linear(out_features,out_features)
         if self.normalize:
             self.norm_layer = nn.BatchNorm1d(out_features)

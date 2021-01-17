@@ -18,9 +18,9 @@ graph_nn_kwargs = dict(
     n_nodes=100,
     n_hidden_layers=3,
     layer_sizes=16,
-    layer_class=gnn.AttentionGNNLayer,#gnn.FullyConnectedGNNLayer,
-    normalize=False,
-    skip_connection_n=0
+    layer_class=gnn.MaxAndMeanGNNLayer,#gnn.AttentionGNNLayer,#gnn.FullyConnectedGNNLayer,
+    normalize=True,
+    skip_connection_n=1
 )
 model = gnn.GraphNNActorCritic(**graph_nn_kwargs)
 """
@@ -65,7 +65,7 @@ initial_opponent_pool = [
 ]
 
 #folder_name = f"small_{graph_nn_kwargs['n_hidden_layers']}_{graph_nn_kwargs['layer_sizes']}_v2"
-folder_name = 'ATTN4improved'
+folder_name = 'MeanMax1'
 a3c_alg = A3CVectorized(model_constructor, optimizer, env_kwargs['obs_type'], model=model, device=DEVICE,
                         exp_folder=Path(f'runs/a3c/{folder_name}'),
                         recurrent_model=False,
@@ -76,7 +76,7 @@ a3c_alg = A3CVectorized(model_constructor, optimizer, env_kwargs['obs_type'], mo
                         initial_opponent_pool=initial_opponent_pool,
                         opp_posterior_decay=0.95)
 
-env_kwargs['n_envs'] = 20
+env_kwargs['n_envs'] = 100
 try:
     with torch.autograd.set_detect_anomaly(True):
         a3c_alg.train(n_episodes=1000, **rl_alg_kwargs, **env_kwargs)
