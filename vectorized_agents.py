@@ -68,7 +68,7 @@ class AlwaysFirstAgent(VectorizedAgent):
 
     
 class BasicThompsonSampling(VectorizedAgent):
-    def __init__(self, obs_norm, n_bandits=100):
+    def __init__(self, obs_norm=100. / 1999., n_bandits=100):
         super().__init__()
         self.obs_norm = obs_norm
         self.n_bandits = n_bandits
@@ -113,7 +113,7 @@ class MultiAgent(VectorizedAgent):
 
 
 class PullVegasSlotMachines(VectorizedAgent):
-    def __init__(self, obs_norm, n_bandits=100):
+    def __init__(self, obs_norm=100. / 1999., n_bandits=100):
         super().__init__()
         self.obs_norm = obs_norm
         self.n_bandits = n_bandits
@@ -136,7 +136,7 @@ class PullVegasSlotMachines(VectorizedAgent):
 
 
 class PullVegasSlotMachinesImproved(VectorizedAgent):
-    def __init__(self, obs_norm, n_bandits=100):
+    def __init__(self, obs_norm=100. / 1999., n_bandits=100):
         super().__init__()
         self.obs_norm = obs_norm
         self.n_bandits = n_bandits
