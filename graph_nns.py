@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 class AttentionGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features,
-                 activation_func=nn.ReLU(), normalize=False, squeeze_out=False, nheads=2):
+                 activation_func=nn.ReLU(), normalize=False, squeeze_out=False, nheads=4):
         super().__init__()
         self.n_nodes = n_nodes
         self.activation_func = activation_func
