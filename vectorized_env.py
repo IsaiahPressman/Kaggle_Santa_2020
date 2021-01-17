@@ -134,7 +134,7 @@ class KaggleMABEnvTorchVectorized:
         self.orig_thresholds = torch.randint(
             self.sample_resolution + 1,
             size=(self.n_envs, self.n_bandits),
-            dtype=torch.float64,
+            dtype=torch.float32,
             device=self.env_device
         )
         self.player_n_pulls = torch.zeros((self.n_envs, self.n_players, self.n_bandits),
@@ -436,7 +436,7 @@ class KaggleMABEnvTorchVectorized:
 
     @property
     def thresholds(self):
-        return self.orig_thresholds * (self.decay_rate ** self.player_n_pulls.sum(dim=1).double())
+        return self.orig_thresholds * (self.decay_rate ** self.player_n_pulls.sum(dim=1))
     
     @property
     def done(self):
