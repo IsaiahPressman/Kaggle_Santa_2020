@@ -330,8 +330,14 @@ class GraphNNActorCritic(nn.Module):
         layer_class_kwargs = copy(layer_class_kwargs)
         layer_class_kwargs.pop('activation_func', None)
         layer_class_kwargs.pop('normalize', None)
-        self.actor = layer_class(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
-        self.critic = layer_class(n_nodes, layer_sizes[-1], 1, activation_func=nn.Identity(), squeeze_out=True)
+        self.actor = layer_class(n_nodes, layer_sizes[-1], 1,
+                                 activation_func=nn.Identity(), squeeze_out=True,
+                                 **layer_class_kwargs
+                                 )
+        self.critic = layer_class(n_nodes, layer_sizes[-1], 1,
+                                  activation_func=nn.Identity(), squeeze_out=True,
+                                  **layer_class_kwargs
+                                  )
     
     def forward(self, states):
         base_out = self.base(states)
