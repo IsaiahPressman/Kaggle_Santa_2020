@@ -20,6 +20,7 @@ class A3CVectorized:
                  exp_folder=Path('runs/a3c/TEMP'),
                  recurrent_model=False, clip_grads=10., log_params_full=False,
                  play_against_past_selves=True, n_past_selves=4, checkpoint_freq=10, initial_opponent_pool=[],
+                 run_separate_validation=True, validation_env_kwargs_dicts=(), deterministic_validation_policy=True,
                  opp_posterior_decay=0.95):
         self.model_constructor = model_constructor
         self.optimizer = optimizer
@@ -45,6 +46,22 @@ class A3CVectorized:
         self.n_past_selves = n_past_selves
         self.checkpoint_freq = checkpoint_freq
         self.initial_opponent_pool = initial_opponent_pool
+        self.run_separate_validation = run_separate_validation
+        self.validation_env_kwargs_dicts = validation_env_kwargs_dicts
+        opponent_names = []
+        for i, d in enumerate(self.validation_env_kwargs_dicts):
+            if d.get('reward_type', ve.END_OF_GAME_TRUE) != ve.END_OF_GAME_TRUE:
+                raise ValueError(f'Validation envs should have reward_type: {ve.END_OF_GAME_TRUE}, was '
+                                 f'{d["reward_type"]} for env {i}')
+            d['reward_type'] = ve.END_OF_GAME_TRUE
+            opp = d.get('opponent')
+            if opp is not None:
+                opponent_names.append(opp.name)
+            else:
+                opponent_names.append('None')
+        if len(opponent_names) != len(np.unique(opponent_names)):
+            raise ValueError(f'Duplicate opponents encountered in validation_env_kwargs_dicts : {opponent_names}')
+        self.deterministic_validation_policy = deterministic_validation_policy
         self.opp_posterior_decay = opp_posterior_decay
 
         self.env = None
@@ -52,6 +69,7 @@ class A3CVectorized:
         self.opp_b = np.ones(len(self.initial_opponent_pool))
         self.checkpoints = []
         self.true_ep_num = 1
+        self.validation_counter = 0
         self.summary_writer = None
         self.log_params_full = log_params_full
 
@@ -141,8 +159,8 @@ class A3CVectorized:
                     total_loss.backward()
                     self.optimizer.step()
                     buffer_a, buffer_r, buffer_l, buffer_v = [], [], [], []
-                    actor_losses.append(actor_loss.detach().mean().clone().cpu())
-                    critic_losses.append(critic_loss.detach().mean().clone().cpu())
+                    actor_losses.append(actor_loss.detach().mean().cpu().clone())
+                    critic_losses.append(critic_loss.detach().mean().cpu().clone())
                 episode_reward_sums += r
                 step_count += 1
             if self.play_against_past_selves:
@@ -151,8 +169,10 @@ class A3CVectorized:
                     self.checkpoint()
             if self.true_ep_num % self.checkpoint_freq == 0:
                 self.save()
+                if self.run_separate_validation:
+                    self.run_validation()
             self.log(
-                episode_reward_sums.mean().clone().cpu() / self.env.r_norm,
+                episode_reward_sums.mean().cpu().clone() / self.env.r_norm,
                 torch.stack(actor_losses),
                 torch.stack(critic_losses),
                 info_dict
@@ -270,6 +290,76 @@ class A3CVectorized:
             })
             df.to_csv(f'{file_path_base}_skill_estimates.csv')
 
+    def run_validation(self):
+        self.model.eval()
+        if len(self.validation_env_kwargs_dicts) > 0:
+            print(f'Validating model performance in {len(self.validation_env_kwargs_dicts)} environments')
+            episode_reward_sums = []
+            final_info_dicts = []
+            for i in tqdm.trange(len(self.validation_env_kwargs_dicts)):
+                if 'opponent' in self.validation_env_kwargs_dicts[i].keys():
+                    self.validation_env_kwargs_dicts[i]['opponent'].reset()
+                # Lazily construct validation envs to conserve GPU memory
+                val_env = ve.KaggleMABEnvTorchVectorized(**self.validation_env_kwargs_dicts[i])
+                s, r, done, info_dict = val_env.reset()
+                episode_reward_sums.append(r)
+                while not done:
+                    if self.deterministic_validation_policy:
+                        a = self.model.choose_best_action(s.to(device=self.device).unsqueeze(0))
+                    else:
+                        a = self.model.sample_action(s.to(device=self.device).unsqueeze(0))
+                    next_s, r, done, info_dict = val_env.step(a.squeeze(0))
+                    s = next_s
+                    episode_reward_sums[-1] += r
+                episode_reward_sums[-1] = episode_reward_sums[-1].mean(dim=-1).cpu().clone() / val_env.r_norm
+                final_info_dicts.append(info_dict)
+            self.log_validation_episodes(
+                episode_reward_sums,
+                final_info_dicts
+            )
+        self.validation_counter += 1
+
+    def log_validation_episodes(self, episode_reward_sums, final_info_dicts):
+        assert len(episode_reward_sums) == len(final_info_dicts)
+        n_val_envs = len(episode_reward_sums)
+        for i, ers, fid in zip(range(n_val_envs), episode_reward_sums, final_info_dicts):
+            opponent = self.validation_env_kwargs_dicts[i].get('opponent')
+            if opponent is not None:
+                opponent = opponent.name
+            env_name = opponent
+
+            self.summary_writer.add_histogram(
+                f'Validation/{env_name}_game_results',
+                ers.numpy(),
+                self.validation_counter
+            )
+            self.summary_writer.add_histogram(
+                f'Validation/{env_name}_hero_pull_rewards',
+                fid['player_rewards_sums'].sum(dim=-1)[:, 0].cpu().numpy(),
+                self.validation_counter
+            )
+            self.summary_writer.add_histogram(
+                f'Validation/{env_name}_villain_pull_rewards',
+                fid['player_rewards_sums'].sum(dim=-1)[:, 1].cpu().numpy(),
+                self.validation_counter
+            )
+            self.summary_writer.add_scalar(
+                f'Validation/{env_name}_win_percent',
+                # W/D/L values are 1/0/-1, so they need to be scaled to 1/0.5/0 to be represented as a percent
+                (ers.mean().numpy().item() + 1) / 2. * 100.,
+                self.validation_counter
+            )
+            self.summary_writer.add_scalar(
+                f'Validation/{env_name}_mean_hero_pull_rewards',
+                fid['player_rewards_sums'].sum(dim=-1)[:, 0].mean().cpu().numpy().item(),
+                self.validation_counter
+            )
+            self.summary_writer.add_scalar(
+                f'Validation/{env_name}_mean_villain_pull_rewards',
+                fid['player_rewards_sums'].sum(dim=-1)[:, 1].mean().cpu().numpy().item(),
+                self.validation_counter
+            )
+
     def log(self, episode_reward_sums, actor_losses, critic_losses, final_info_dict):
         # Lazily initialize summary_writer
         if self.summary_writer is None:
@@ -310,12 +400,12 @@ class A3CVectorized:
         )
         self.summary_writer.add_scalar(
             'Episode/mean_p1_pull_rewards',
-            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 0].mean().numpy().item(),
+            final_info_dict['player_rewards_sums'].sum(dim=-1)[:, 0].mean().cpu().numpy().item(),
             self.true_ep_num
         )
         self.summary_writer.add_scalar(
             'Episode/mean_p2_pull_rewards',
-            final_info_dict['player_rewards_sums'].cpu().sum(dim=-1)[:, 1].mean().numpy().item(),
+            final_info_dict['player_rewards_sums'].sum(dim=-1)[:, 1].mean().cpu().numpy().item(),
             self.true_ep_num
         )
 
@@ -323,13 +413,13 @@ class A3CVectorized:
             if param.requires_grad:
                 self.summary_writer.add_scalar(
                     f'Params/{name}_mean_magnitude',
-                    param.detach().cpu().clone().abs().mean().numpy().item(),
+                    param.detach().abs().mean().cpu().clone().numpy().item(),
                     self.true_ep_num
                 )
                 if param.view(-1).shape[0] > 1:
                     self.summary_writer.add_scalar(
                         f'Params/{name}_standard_deviation',
-                        param.detach().cpu().clone().std().numpy().item(),
+                        param.detach().std().cpu().clone().numpy().item(),
                         self.true_ep_num
                     )
                 else:
