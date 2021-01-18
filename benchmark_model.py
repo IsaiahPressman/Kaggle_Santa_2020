@@ -13,6 +13,7 @@ DEVICE = torch.device('cuda')
 RUN_FOLDER = 'a3c/TEMP'
 MODEL_CHECKPOINT = '140'
 AGENT_OBS_TYPE = ve.SUMMED_OBS
+USE_DETERMINISTIC_POLICY = True
 
 if DEVICE == torch.device('cpu'):
     os.environ['OMP_NUM_THREADS'] = '4'
@@ -43,7 +44,7 @@ model_wrapped = va.RLModelWrapperAgent(
     model,
     AGENT_OBS_TYPE,
     name=f'new_model checkpoint #{MODEL_CHECKPOINT}',
-    deterministic_policy=True
+    deterministic_policy=USE_DETERMINISTIC_POLICY
 )
 
 benchmark_env_kwargs = dict(
