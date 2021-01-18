@@ -259,9 +259,9 @@ class KaggleMABEnvTorchVectorized:
         if self.reward_type == EVERY_STEP_TRUE:
             rewards = pull_rewards
         elif self.reward_type == EVERY_STEP_EV:
-            rewards = selected_thresholds / self.sample_resolution
+            rewards = selected_thresholds.ceil() / self.sample_resolution
         elif self.reward_type == EVERY_STEP_EV_ZEROSUM:
-            rewards_ev = selected_thresholds / self.sample_resolution
+            rewards_ev = selected_thresholds.ceil() / self.sample_resolution
             rewards = torch.stack([
                 rewards_ev[:, 0] - rewards_ev[:, 1],
                 rewards_ev[:, 1] - rewards_ev[:, 0]

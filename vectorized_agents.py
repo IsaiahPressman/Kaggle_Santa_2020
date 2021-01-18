@@ -314,13 +314,16 @@ class SavedRLAgent(VectorizedAgent):
         self.model.load_state_dict(sd)
         self.model.to(device=device)
         self.model.eval()
+        self.device = device
         if deterministic_policy:
             self.act_func = self.model.choose_best_action
         else:
             self.act_func = self.model.sample_action
         
     def __call__(self, states):
-        return self.act_func(states.unsqueeze(0)).squeeze(0)
+        states_device = states.device
+        actions = self.act_func(states.to(device=self.device).unsqueeze(0)).squeeze(0)
+        return actions.to(device=states_device)
 
 
 class RLModelWrapperAgent(VectorizedAgent):
