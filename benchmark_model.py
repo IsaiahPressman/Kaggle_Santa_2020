@@ -14,11 +14,7 @@ RUN_FOLDER = 'a3c/TEMP'
 MODEL_CHECKPOINT = '140'
 AGENT_OBS_TYPE = ve.SUMMED_OBS
 USE_DETERMINISTIC_POLICY = True
-
-if DEVICE == torch.device('cpu'):
-    os.environ['OMP_NUM_THREADS'] = '4'
-
-graph_nn_kwargs = dict(
+GRAPH_NN_KWARGS = dict(
     in_features=3,
     n_nodes=100,
     n_hidden_layers=2,
@@ -29,8 +25,11 @@ graph_nn_kwargs = dict(
     skip_connection_n=1
 )
 
+if DEVICE == torch.device('cpu'):
+    os.environ['OMP_NUM_THREADS'] = '4'
+
 model = gnn.GraphNNActorCritic(
-    **graph_nn_kwargs
+    **GRAPH_NN_KWARGS
 )
 
 with open(f'runs/{RUN_FOLDER}/{MODEL_CHECKPOINT}_cp.txt', 'r') as f:
