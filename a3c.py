@@ -88,9 +88,9 @@ class A3CVectorized:
             raise RuntimeError('Cannot play against past selves when opponent is defined')
         if self.play_against_past_selves and 'opponent_obs_type' in env_kwargs.keys():
             raise RuntimeError('Cannot play against past selves when opponent_obs_type is defined')
-        self.model.train()
 
         for ep_num in tqdm.trange(n_episodes):
+            self.model.train()
             if self.recurrent_model:
                 self.model.reset_hidden_states()
             if self.play_against_past_selves:
