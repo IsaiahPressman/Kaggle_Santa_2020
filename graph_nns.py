@@ -245,14 +245,13 @@ class SmallMeanGNNLayer(nn.Module):
         nn.init.constant_(self.recombine_features.bias, 0.)
 
     def forward(self, features):
-        messages = features.mean(dim=-2, keepdims=True).expand(-1, -1, -1, self.n_nodes, -1)
+        features_shape = features.shape
+        features = features.view(-1, *features_shape[-2:])
+        messages = features.mean(dim=-2, keepdims=True).expand(-1, self.n_nodes, -1)
         out = self.recombine_features(torch.cat([features, messages], dim=-1))
         if self.normalize:
-            out_shape = out.shape
-            out = out.view(torch.prod(torch.tensor(out_shape[:-2])).item(), *out_shape[-2:])
             out = self.norm_layer(out.transpose(1, 2)).transpose(1, 2)
-            out = out.view(out_shape)
-        out = self.activation_func(out)
+        out = self.activation_func(out).view(*features_shape[:-1], -1)
         if self.squeeze_out:
             return out.squeeze(dim=-1)
         else:
