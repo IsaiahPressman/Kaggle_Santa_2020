@@ -69,7 +69,7 @@ class A3CVectorized:
         self.opp_b = np.ones(len(self.initial_opponent_pool))
         self.checkpoints = []
         self.true_ep_num = 1
-        self.validation_counter = 0
+        self.validation_counter = 1
         self.summary_writer = None
         self.log_params_full = log_params_full
 
