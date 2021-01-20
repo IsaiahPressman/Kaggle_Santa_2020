@@ -88,7 +88,7 @@ class MaxAndMeanGNNLayer(nn.Module):
 
     def forward(self, features):
         shape=features.shape
-        reshaped=features.reshape(-1,shape[-2],shape[-1])
+        reshaped=features.view(-1,shape[-2],shape[-1])
         x=self.lina(F.relu(reshaped))
         summed=torch.mean(x,dim=1,keepdim=True).expand(-1,100,-1)
         maxed=(torch.max(x,dim=1,keepdim=True)[0]).expand(-1,100,-1)
@@ -96,7 +96,7 @@ class MaxAndMeanGNNLayer(nn.Module):
         x=self.linb(F.relu(x))
         if(self.normalize):
             x=self.norm_layer(x.transpose(1, 2)).transpose(1, 2)
-        out=x.reshape(shape[0],shape[1],shape[2],shape[3],-1)
+        out=x.view(shape[0],shape[1],shape[2],shape[3],-1)
         if self.squeeze_out:
             return out.squeeze(dim=-1)
         else:
@@ -211,6 +211,41 @@ class SmallFullyConnectedGNNLayer(nn.Module):
 
     def forward(self, features):
         messages = torch.matmul(self.message_passing_mat, features)
+        out = self.recombine_features(torch.cat([features, messages], dim=-1))
+        if self.normalize:
+            out_shape = out.shape
+            out = out.view(torch.prod(torch.tensor(out_shape[:-2])).item(), *out_shape[-2:])
+            out = self.norm_layer(out.transpose(1, 2)).transpose(1, 2)
+            out = out.view(out_shape)
+        out = self.activation_func(out)
+        if self.squeeze_out:
+            return out.squeeze(dim=-1)
+        else:
+            return out
+
+    def reset_hidden_states(self):
+        pass
+
+
+class SmallMeanGNNLayer(nn.Module):
+    def __init__(self, n_nodes, in_features, out_features,
+                 activation_func=nn.ReLU(), normalize=False, squeeze_out=False):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.activation_func = activation_func
+        self.normalize = normalize
+        if self.normalize:
+            self.norm_layer = nn.BatchNorm1d(out_features)
+        else:
+            self.norm_layer = None
+        self.recombine_features = nn.Linear(in_features * 2, out_features)
+        self.squeeze_out = squeeze_out
+        # Initialize linear layer weights
+        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.2)
+        nn.init.constant_(self.recombine_features.bias, 0.)
+
+    def forward(self, features):
+        messages = features.mean(dim=-2, keepdims=True).expand(-1, -1, -1, self.n_nodes, -1)
         out = self.recombine_features(torch.cat([features, messages], dim=-1))
         if self.normalize:
             out_shape = out.shape
