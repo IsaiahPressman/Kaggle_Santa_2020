@@ -14,7 +14,7 @@ DEVICE = torch.device('cuda')
 OBS_NORM = 100. / 1999.
 
 graph_nn_kwargs = dict(
-    in_features=3,
+    in_features=33,
     n_nodes=100,
     n_hidden_layers=3,
     layer_sizes=16,
@@ -38,7 +38,7 @@ env_kwargs = dict(
     out_device=DEVICE,
     normalize_reward=False,
     reward_type=ve.EVERY_STEP_EV_ZEROSUM,
-    obs_type=ve.SUMMED_OBS,
+    obs_type=ve.SUMMED_AND_LAST_TEN,
     #opponent_obs_type=ve.SUMMED_OBS
 )
 rl_alg_kwargs = dict(
@@ -65,7 +65,7 @@ initial_opponent_pool = [
 ]
 
 #folder_name = f"small_{graph_nn_kwargs['n_hidden_layers']}_{graph_nn_kwargs['layer_sizes']}_v2"
-folder_name = 'MeanMax1'
+folder_name = 'MeanMax3'
 a3c_alg = A3CVectorized(model_constructor, optimizer, env_kwargs['obs_type'], model=model, device=DEVICE,
                         exp_folder=Path(f'runs/a3c/{folder_name}'),
                         recurrent_model=False,

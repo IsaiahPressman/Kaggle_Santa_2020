@@ -13,7 +13,7 @@ SUMMED_OBS_WITH_TIMESTEP = 'summed_obs_with_timestep'
 LAST_STEP_OBS = 'last_step_obs'
 EVERY_STEP_OBS = 'every_step_obs'
 EVERY_STEP_OBS_RAVELLED = 'every_step_obs_ravelled'
-
+SUMMED_AND_LAST_TEN='summed_and_last_ten'
 REWARD_TYPES = (
     EVERY_STEP_TRUE,
     EVERY_STEP_EV,
@@ -27,7 +27,8 @@ OBS_TYPES = (
     LAST_STEP_OBS,
     SUMMED_OBS_NOISE,
     EVERY_STEP_OBS,
-    EVERY_STEP_OBS_RAVELLED
+    EVERY_STEP_OBS_RAVELLED,
+    SUMMED_AND_LAST_TEN
 )
 
 
@@ -86,13 +87,13 @@ class KaggleMABEnvTorchVectorized:
         self.env_device = env_device
         self.out_device = out_device
 
-        if self.obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP, SUMMED_OBS_NOISE):
+        if self.obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP, SUMMED_OBS_NOISE,SUMMED_AND_LAST_TEN):
             self.obs_norm = self.n_bandits / self.n_steps
         elif self.obs_type in (LAST_STEP_OBS, EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED):
             self.obs_norm = 1.
         else:
             raise ValueError(f'Unsupported obs_type: {self.obs_type}')
-        if self.opponent_obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP,SUMMED_OBS_NOISE):
+        if self.opponent_obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP,SUMMED_OBS_NOISE,SUMMED_AND_LAST_TEN):
             self.opponent_obs_norm = self.n_bandits / self.n_steps
         elif self.opponent_obs_type in (LAST_STEP_OBS, EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED):
             self.opponent_obs_norm = 1.
@@ -106,8 +107,8 @@ class KaggleMABEnvTorchVectorized:
         self.last_rewards = None
         self.all_pulls_onehot = None
         self.all_pull_rewards_onehot = None
-        self.store_every_step = (self.obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED) or
-                                 self.opponent_obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED))
+        self.store_every_step = (self.obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED,SUMMED_AND_LAST_TEN) or
+                                 self.opponent_obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED,SUMMED_AND_LAST_TEN))
         self.reset()
         
     def _single_player_decorator(f):
@@ -174,6 +175,8 @@ class KaggleMABEnvTorchVectorized:
                 opp_obs = self._get_every_step_obs()
             elif self.opponent_obs_type == EVERY_STEP_OBS_RAVELLED:
                 opp_obs = self._get_every_step_obs_ravelled()
+            elif self.opponent_obs_type == SUMMED_AND_LAST_TEN:
+                opp_obs = self._get_summed_obs_and_last_ten()
             else:
                 raise ValueError(f'Unsupported opponent obs_type {self.opponent_obs_type}')
             opp_obs = opp_obs * self.opponent_obs_norm
@@ -292,6 +295,8 @@ class KaggleMABEnvTorchVectorized:
             obs = self._get_last_step_obs()
         elif self.obs_type == EVERY_STEP_OBS:
             obs = self._get_every_step_obs()
+        elif self.obs_type == SUMMED_AND_LAST_TEN:
+            obs = self._get_summed_obs_and_last_ten()
         elif self.obs_type == EVERY_STEP_OBS_RAVELLED:
             obs = self._get_every_step_obs_ravelled()
         else:
@@ -433,6 +438,15 @@ class KaggleMABEnvTorchVectorized:
         # Each actor receives a tensor of shape: (1, 1, n_bandits, n_steps * (n_players+1))
         # The overall obs tensor shape is: (n_envs, n_players, n_bandits, n_steps * n(_players+1))
         return self._get_every_step_obs().view(self.n_envs, self.n_players, self.n_bandits, -1)
+
+    def _get_summed_obs_and_last_ten(self):
+        # The overall obs tensor shape is: (n_envs, n_players, n_bandits, 3+10 * n(_players+1))
+        time=self.timestep
+        all_steps=self._get_every_step_obs()[:,:,:,max(0,time-10):time,:].view(self.n_envs, self.n_players, self.n_bandits, -1)
+        all_steps=torch.nn.functional.pad(all_steps,(30-time*3,0),"constant", 0)
+        summed_obs=self._get_summed_obs()
+        result=torch.cat([all_steps,summed_obs],dim=3)
+        return result
 
     @property
     def thresholds(self):

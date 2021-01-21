@@ -238,11 +238,12 @@ class SmallMeanGNNLayer(nn.Module):
             self.norm_layer = nn.BatchNorm1d(out_features)
         else:
             self.norm_layer = None
-        self.recombine_features = nn.Linear(in_features * 2, out_features)
+        self.recombine_features = nn.Linear(out_features * 2, out_features)
         self.squeeze_out = squeeze_out
         # Initialize linear layer weights
-        nn.init.normal_(self.recombine_features.weight, mean=0., std=0.2)
-        nn.init.constant_(self.recombine_features.bias, 0.)
+        # default inintilizaer tends to work better for resnets
+        # nn.init.normal_(self.recombine_features.weight, mean=0., std=0.2)
+        # nn.init.constant_(self.recombine_features.bias, 0.)
 
     def forward(self, features):
         features_shape = features.shape
