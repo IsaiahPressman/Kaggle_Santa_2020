@@ -5,7 +5,6 @@ EVERY_STEP_TRUE = 'every_step_true'
 EVERY_STEP_EV = 'every_step_ev'
 EVERY_STEP_EV_ZEROSUM = 'every_step_ev_zerosum'
 END_OF_GAME_TRUE = 'end_of_game_true'
-# END_OF_GAME_EV = 3
 
 SUMMED_OBS = 'summed_obs'
 SUMMED_OBS_NOISE='summed_obs_noise'
@@ -13,7 +12,11 @@ SUMMED_OBS_WITH_TIMESTEP = 'summed_obs_with_timestep'
 LAST_STEP_OBS = 'last_step_obs'
 EVERY_STEP_OBS = 'every_step_obs'
 EVERY_STEP_OBS_RAVELLED = 'every_step_obs_ravelled'
-SUMMED_AND_LAST_TEN='summed_and_last_ten'
+SUMMED_AND_LAST_TEN = 'summed_and_last_ten'
+LAST_60_EVENTS_OBS = 'last_60_events_obs'
+LAST_60_EVENTS_AND_SUMMED_OBS = 'last_60_events_and_summed_obs'
+DECAYING_OBS = 'decaying_obs'
+
 REWARD_TYPES = (
     EVERY_STEP_TRUE,
     EVERY_STEP_EV,
@@ -28,7 +31,10 @@ OBS_TYPES = (
     SUMMED_OBS_NOISE,
     EVERY_STEP_OBS,
     EVERY_STEP_OBS_RAVELLED,
-    SUMMED_AND_LAST_TEN
+    SUMMED_AND_LAST_TEN,
+    LAST_60_EVENTS_OBS,
+    LAST_60_EVENTS_AND_SUMMED_OBS,
+    DECAYING_OBS
 )
 
 
@@ -66,10 +72,8 @@ class KaggleMABEnvTorchVectorized:
         if n_players > 2:
             raise ValueError('n_players > 2 is not currently supported')
         self.reward_type = reward_type
-        if self.reward_type == EVERY_STEP_EV_ZEROSUM:
-            assert self.n_players == 2
         self.obs_type = obs_type
-        assert self.obs_type in OBS_TYPES
+        assert self.obs_type in OBS_TYPES, f'obs_type "{self.obs_type}" is not recognized'
         self.opponent = opponent
         if self.opponent is not None:
             assert self.n_players == 2
@@ -77,8 +81,8 @@ class KaggleMABEnvTorchVectorized:
             self.opponent_obs_type = self.obs_type
         else:
             self.opponent_obs_type = opponent_obs_type
-        assert self.opponent_obs_type in OBS_TYPES
-        if not normalize_reward or self.reward_type in (END_OF_GAME_TRUE,):
+        assert self.opponent_obs_type in OBS_TYPES, f'opponent_obs_type "{self.opponent_obs_type}" is not recognized'
+        if not normalize_reward or self.reward_type in (EVERY_STEP_EV_ZEROSUM, END_OF_GAME_TRUE):
             self.r_norm = 1.
         else:
             self.r_norm = 1. / (torch.sum(self.decay_rate ** torch.arange(self.n_steps, dtype=torch.float32)) * \
@@ -87,18 +91,22 @@ class KaggleMABEnvTorchVectorized:
         self.env_device = env_device
         self.out_device = out_device
 
-        if self.obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP, SUMMED_OBS_NOISE,SUMMED_AND_LAST_TEN):
-            self.obs_norm = self.n_bandits / self.n_steps
-        elif self.obs_type in (LAST_STEP_OBS, EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED):
-            self.obs_norm = 1.
-        else:
-            raise ValueError(f'Unsupported obs_type: {self.obs_type}')
-        if self.opponent_obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP,SUMMED_OBS_NOISE,SUMMED_AND_LAST_TEN):
-            self.opponent_obs_norm = self.n_bandits / self.n_steps
-        elif self.opponent_obs_type in (LAST_STEP_OBS, EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED):
-            self.opponent_obs_norm = 1.
-        else:
-            raise ValueError(f'Unsupported opponent obs_type: {self.opponent_obs_type}')
+        self.obs_norm_dict = {
+            SUMMED_OBS: self.n_bandits / self.n_steps,
+            SUMMED_OBS_WITH_TIMESTEP: self.n_bandits / self.n_steps,
+            LAST_STEP_OBS: 1.,
+            SUMMED_OBS_NOISE: self.n_bandits / self.n_steps,
+            EVERY_STEP_OBS: 1.,
+            EVERY_STEP_OBS_RAVELLED: 1.,
+            SUMMED_AND_LAST_TEN: self.n_bandits / self.n_steps,
+            LAST_60_EVENTS_OBS: 1.,
+            LAST_60_EVENTS_AND_SUMMED_OBS: 1.,
+            DECAYING_OBS: 1.
+        }
+        if self.obs_type not in self.obs_norm_dict.keys():
+            raise RuntimeError(f'obs_type "{self.obs_type}" does not have a defined obs_norm')
+        if self.opponent_obs_type not in self.obs_norm_dict.keys():
+            raise RuntimeError(f'opponent_obs_type "{self.opponent_obs_type}" does not have a defined obs_norm')
         self.timestep = None
         self.orig_thresholds = None
         self.player_n_pulls = None
@@ -107,8 +115,18 @@ class KaggleMABEnvTorchVectorized:
         self.last_rewards = None
         self.all_pulls_onehot = None
         self.all_pull_rewards_onehot = None
-        self.store_every_step = (self.obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED,SUMMED_AND_LAST_TEN) or
-                                 self.opponent_obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED,SUMMED_AND_LAST_TEN))
+        self.store_every_step = (
+                self.obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED, SUMMED_AND_LAST_TEN) or
+                self.opponent_obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED, SUMMED_AND_LAST_TEN)
+        )
+        self.last_60_pull_events = None
+        self.last_60_reward_events = None
+        self.last_60_event_timestamps = None
+        self.last_60_event_indices = None
+        self.store_events = (
+                self.obs_type in (LAST_60_EVENTS_OBS, LAST_60_EVENTS_AND_SUMMED_OBS) or
+                self.opponent_obs_type in (LAST_60_EVENTS_OBS, LAST_60_EVENTS_AND_SUMMED_OBS)
+        )
         self.reset()
         
     def _single_player_decorator(f):
@@ -135,7 +153,7 @@ class KaggleMABEnvTorchVectorized:
         self.orig_thresholds = torch.randint(
             self.sample_resolution + 1,
             size=(self.n_envs, self.n_bandits),
-            dtype=torch.float32,
+            dtype=torch.float,
             device=self.env_device
         )
         self.player_n_pulls = torch.zeros((self.n_envs, self.n_players, self.n_bandits),
@@ -147,13 +165,15 @@ class KaggleMABEnvTorchVectorized:
         # This is memory intensive, so is only done when necessary
         if self.store_every_step:
             self.all_pulls_onehot = torch.zeros((self.n_envs, self.n_players, self.n_bandits, self.n_steps),
-                                                device=self.env_device, dtype=torch.float)
-            self.all_pull_rewards_onehot = torch.zeros_like(self.all_pulls_onehot)
-            # Deprecated sparse implementation:
-            """
-            self.all_pull_indices = torch.empty((4, 0), dtype=torch.long, device=self.env_device)
-            self.all_pull_rewards = torch.empty(0, dtype=torch.float, device=self.env_device)
-            """
+                                                device=self.env_device, dtype=torch.float) - 1.
+            self.all_pull_rewards_onehot = torch.zeros_like(self.all_pulls_onehot) - 1.
+        if self.store_events:
+            self.last_60_pull_events = torch.zeros((self.n_envs, self.n_players, self.n_bandits, 60, self.n_players),
+                                                   device=self.env_device, dtype=torch.float) - 1.
+            self.last_60_reward_events = torch.zeros_like(self.last_60_pull_events) - 1.
+            self.last_60_event_timestamps = torch.zeros_like(self.last_60_pull_events) - 1.
+            self.last_60_event_indices = torch.zeros((self.n_envs, self.n_bandits),
+                                                     device=self.env_device, dtype=torch.long)
 
         rewards = torch.zeros((self.n_envs, self.n_players), device=self.env_device) * self.r_norm
         return self.obs, rewards, self.done, self.info_dict
@@ -177,6 +197,12 @@ class KaggleMABEnvTorchVectorized:
                 opp_obs = self._get_every_step_obs_ravelled()
             elif self.opponent_obs_type == SUMMED_AND_LAST_TEN:
                 opp_obs = self._get_summed_obs_and_last_ten()
+            elif self.opponent_obs_type == LAST_60_EVENTS_OBS:
+                opp_obs = self._get_last_60_events_obs()
+            elif self.opponent_obs_type == LAST_60_EVENTS_AND_SUMMED_OBS:
+                opp_obs = self._get_last_60_events_and_summed_obs()
+            elif self.opponent_obs_type == DECAYING_OBS:
+                opp_obs = self._get_decaying_obs()
             else:
                 raise ValueError(f'Unsupported opponent obs_type {self.opponent_obs_type}')
             opp_obs = opp_obs * self.opponent_obs_norm
@@ -195,6 +221,7 @@ class KaggleMABEnvTorchVectorized:
             size=selected_thresholds.shape,
             dtype=selected_thresholds.dtype,
             device=self.env_device) < selected_thresholds
+        pull_rewards = pull_rewards.to(dtype=torch.float)
         selected_thresholds = selected_thresholds.float()
         
         # Update player_n_pulls and player_rewards_sums
@@ -211,8 +238,6 @@ class KaggleMABEnvTorchVectorized:
             actions.view(-1)
         ] += pull_rewards.view(-1)
         # Used when obs_type == LAST_STEP_OBS
-        self.last_pulls = torch.zeros_like(self.last_pulls)
-        self.last_rewards = torch.zeros_like(self.last_rewards)
         self.last_pulls[
             envs_idxs,
             players_idxs,
@@ -222,7 +247,7 @@ class KaggleMABEnvTorchVectorized:
             envs_idxs,
             players_idxs,
             actions.view(-1)
-        ] += pull_rewards.view(-1)
+        ] = pull_rewards.view(-1)
         # Used when obs_type == EVERY_STEP_OBS
         if self.store_every_step:
             timestep_idxs = torch.zeros_like(envs_idxs) + self.timestep - 1
@@ -231,34 +256,46 @@ class KaggleMABEnvTorchVectorized:
                 players_idxs,
                 actions.view(-1),
                 timestep_idxs
-            ] += 1.
+            ] = 1.
             self.all_pull_rewards_onehot[
                 envs_idxs,
                 players_idxs,
                 actions.view(-1),
                 timestep_idxs
-            ] += pull_rewards.view(-1)
-            # Deprecated sparse implementation:
-            """
-            envs_idxs = envs_idxs.to(device=self.env_device)
-            players_idxs = players_idxs.to(device=self.env_device)
-            timestep_idxs = torch.zeros_like(envs_idxs) + self.timestep - 1
-            this_step_indices = torch.stack([
+            ] = pull_rewards.view(-1)
+        if self.store_events:
+            event_indices = self.last_60_event_indices.gather(-1, actions).view(-1)
+            # In envs where players select different arms, there will be multiple events
+            # However, in envs where both players select the same arm, there will only be one event
+            events_mask = torch.cat([
+                torch.ones(self.n_envs, 1, dtype=torch.bool, device=self.env_device),
+                torch.unsqueeze(actions[:, 1] != actions[:, 0], dim=1)
+            ], dim=-1).view(-1)
+            pull_events = torch.zeros(self.n_envs, self.n_players, 2)
+            self.last_60_pull_events[
                 envs_idxs,
                 players_idxs,
                 actions.view(-1),
-                timestep_idxs
-            ], dim=0).to(self.env_device)
-            self.all_pull_indices = torch.cat([
-                self.all_pull_indices,
-                this_step_indices
-            ], dim=1)
-            self.all_pull_rewards = torch.cat([
-                self.all_pull_rewards,
-                pull_rewards.view(-1).float()
-            ], dim=0)
-            """
-        
+                event_indices
+            ] = 1.
+            self.last_60_reward_events[
+                envs_idxs,
+                players_idxs,
+                actions.view(-1),
+                event_indices
+            ] = pull_rewards.view(-1)
+            self.last_60_event_timestamps[
+                envs_idxs,
+                players_idxs,
+                actions.view(-1),
+                event_indices
+            ] = float(self.timestep) / self.n_steps
+            self.last_60_event_indices[
+                envs_idxs,
+                players_idxs,
+                actions.view(-1)
+            ] += 1
+
         if self.reward_type == EVERY_STEP_TRUE:
             rewards = pull_rewards
         elif self.reward_type == EVERY_STEP_EV:
@@ -278,6 +315,8 @@ class KaggleMABEnvTorchVectorized:
                 rewards[torch.arange(rewards.shape[0]), winners_idxs] = 1.
                 rewards[torch.arange(rewards.shape[0]), (1 - winners_idxs)] = -1.
                 rewards[draws_mask] = 0.
+        else:
+            raise ValueError(f'Unrecognized reward_type: {self.reward_type}')
 
         rewards = rewards * self.r_norm
         # State, reward, done, info_dict
@@ -295,10 +334,16 @@ class KaggleMABEnvTorchVectorized:
             obs = self._get_last_step_obs()
         elif self.obs_type == EVERY_STEP_OBS:
             obs = self._get_every_step_obs()
-        elif self.obs_type == SUMMED_AND_LAST_TEN:
-            obs = self._get_summed_obs_and_last_ten()
         elif self.obs_type == EVERY_STEP_OBS_RAVELLED:
             obs = self._get_every_step_obs_ravelled()
+        elif self.obs_type == SUMMED_AND_LAST_TEN:
+            obs = self._get_summed_obs_and_last_ten()
+        elif self.obs_type == LAST_60_EVENTS_OBS:
+            obs = self._get_last_60_events_obs()
+        elif self.obs_type == LAST_60_EVENTS_AND_SUMMED_OBS:
+            obs = self._get_last_60_events_and_summed_obs()
+        elif self.obs_type == DECAYING_OBS:
+            obs = self._get_decaying_obs()
         else:
             raise ValueError(f'Unsupported obs_type: {self.obs_type}')
         return obs * self.obs_norm
@@ -404,19 +449,6 @@ class KaggleMABEnvTorchVectorized:
         # The output is a mostly sparse tensor where each value is either 0. or 1.
         if not self.store_every_step:
             raise RuntimeError('This environment is not storing every_step information')
-        # Deprecated sparse implementation:
-        """
-        all_pulls_onehot = torch.sparse.FloatTensor(
-            self.all_pull_indices,
-            torch.ones(self.all_pull_indices.shape[1], dtype=torch.float, device=self.env_device),
-            torch.Size([self.n_envs, self.n_players, self.n_bandits, self.n_steps])
-        ).to_dense()
-        all_rewards = torch.sparse.FloatTensor(
-            self.all_pull_indices,
-            self.all_pull_rewards,
-            torch.Size([self.n_envs, self.n_players, self.n_bandits, self.n_steps])
-        ).to_dense()
-        """
         if self.n_players == 1:
             obs = torch.stack([
                 self.all_pulls_onehot,
@@ -436,22 +468,74 @@ class KaggleMABEnvTorchVectorized:
     def _get_every_step_obs_ravelled(self):
         # Same as every_step_obs, but with each bandit's sample "ravelled"
         # Each actor receives a tensor of shape: (1, 1, n_bandits, n_steps * (n_players+1))
-        # The overall obs tensor shape is: (n_envs, n_players, n_bandits, n_steps * n(_players+1))
+        # The overall obs tensor shape is: (n_envs, n_players, n_bandits, n_steps * (n_players+1))
         return self._get_every_step_obs().view(self.n_envs, self.n_players, self.n_bandits, -1)
 
     def _get_summed_obs_and_last_ten(self):
         # The overall obs tensor shape is: (n_envs, n_players, n_bandits, 3+10 * n(_players+1))
-        time=self.timestep
-        all_steps=self._get_every_step_obs()[:,:,:,max(0,time-10):time,:].view(self.n_envs, self.n_players, self.n_bandits, -1)
-        all_steps=torch.nn.functional.pad(all_steps,(30-time*3,0),"constant", 0)
-        summed_obs=self._get_summed_obs()
-        result=torch.cat([all_steps,summed_obs],dim=3)
+        time = self.timestep
+        all_steps = self._get_every_step_obs()[:, :, :, max(0, time-10):time, :].view(
+            self.n_envs,
+            self.n_players,
+            self.n_bandits,
+            -1
+        )
+        all_steps = torch.nn.functional.pad(all_steps, (30-time*3, 0), "constant", -1.)
+        summed_obs = self._get_summed_obs()
+        result = torch.cat([all_steps, summed_obs], dim=3)
         return result
+
+    def _get_last_60_events_obs(self):
+        # Return an observation with information about the last 60 "events" per arm
+        # An event is when either player pulls that arm
+        # Each actor receives a tensor of shape: (1, 1, n_bandits, 60 * (n_players+2))
+        # The overall obs tensor shape is: (n_envs, n_players, n_bandits, 60 * (n_players+2))
+        # 60 * (n_players+2): 60 events * (my_pull, opp_pull, my_reward, timestamp)
+        # The output is a mostly sparse tensor, where each pull and reward value is either -1., 0. or 1.
+        # -1. indicates that the event has not yet happened
+        # The timestamps are in the range 0. to 1., depending on when the event occurred
+        if not self.store_events:
+            raise RuntimeError('This environment is not storing last_60_events information')
+        if self.n_players == 1:
+            obs = torch.stack([
+                self.last_60_pull_events,
+                self.last_60_reward_events,
+                self.last_60_event_timestamps
+            ], dim=-1)
+        else:
+            pull_events_relative = torch.stack([
+                self.last_60_pull_events,
+                self.last_60_pull_events[:, [1, 0], :]
+            ], dim=-1)
+            obs = torch.cat([
+                pull_events_relative,
+                self.last_60_reward_events.unsqueeze(-1),
+                self.last_60_event_timestamps.unsqueeze(-1),
+            ], dim=-1)
+        return obs.view(self.n_envs, self.n_players, self.n_bandits, -1)
+
+    def _get_last_60_events_and_summed_obs(self):
+        # _get_last_60_events_obs and _get_summed_obs_with_timestep concatenated
+        return torch.cat([
+            self._get_last_60_events_obs(),
+            self._get_summed_obs_with_timestep() * self.obs_norm_dict[SUMMED_OBS_WITH_TIMESTEP]
+        ], dim=-1)
+
+    def _get_decaying_obs(self):
+        assert False, 'TODO: not yet implemented'
 
     @property
     def thresholds(self):
         return self.orig_thresholds * (self.decay_rate ** self.player_n_pulls.sum(dim=1))
-    
+
+    @property
+    def obs_norm(self):
+        return self.obs_norm_dict[self.obs_type]
+
+    @property
+    def opponent_obs_norm(self):
+        return self.obs_norm_dict[self.opponent_obs_type]
+
     @property
     def done(self):
         return self.timestep >= self.n_steps
