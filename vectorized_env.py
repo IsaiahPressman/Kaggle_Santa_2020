@@ -37,6 +37,7 @@ OBS_TYPES = (
     DECAYING_OBS
 )
 
+NO_INFO_VAL = 0.
 
 # A vectorized and GPU-compatible recreation of the kaggle "MAB" environment
 class KaggleMABEnvTorchVectorized:
@@ -165,13 +166,13 @@ class KaggleMABEnvTorchVectorized:
         # This is memory intensive, so is only done when necessary
         if self.store_every_step:
             self.all_pulls_onehot = torch.zeros((self.n_envs, self.n_players, self.n_bandits, self.n_steps),
-                                                device=self.env_device, dtype=torch.float) - 1.
-            self.all_pull_rewards_onehot = torch.zeros_like(self.all_pulls_onehot) - 1.
+                                                device=self.env_device, dtype=torch.float) + NO_INFO_VAL
+            self.all_pull_rewards_onehot = torch.zeros_like(self.all_pulls_onehot) + NO_INFO_VAL
         if self.store_events:
-            self.last_60_pull_events = torch.zeros((self.n_envs, self.n_players, self.n_bandits, 60, self.n_players),
-                                                   device=self.env_device, dtype=torch.float) - 1.
-            self.last_60_reward_events = torch.zeros_like(self.last_60_pull_events) - 1.
-            self.last_60_event_timestamps = torch.zeros_like(self.last_60_pull_events) - 1.
+            self.last_60_pull_events = torch.zeros((self.n_envs, self.n_players, self.n_bandits, 60),
+                                                   device=self.env_device, dtype=torch.float) + NO_INFO_VAL
+            self.last_60_reward_events = torch.zeros_like(self.last_60_pull_events) + NO_INFO_VAL
+            self.last_60_event_timestamps = torch.zeros_like(self.last_60_pull_events) + NO_INFO_VAL
             self.last_60_event_indices = torch.zeros((self.n_envs, self.n_bandits),
                                                      device=self.env_device, dtype=torch.long)
 
@@ -264,37 +265,44 @@ class KaggleMABEnvTorchVectorized:
                 timestep_idxs
             ] = pull_rewards.view(-1)
         if self.store_events:
-            event_indices = self.last_60_event_indices.gather(-1, actions).view(-1)
-            # In envs where players select different arms, there will be multiple events
-            # However, in envs where both players select the same arm, there will only be one event
-            events_mask = torch.cat([
-                torch.ones(self.n_envs, 1, dtype=torch.bool, device=self.env_device),
-                torch.unsqueeze(actions[:, 1] != actions[:, 0], dim=1)
-            ], dim=-1).view(-1)
-            pull_events = torch.zeros(self.n_envs, self.n_players, 2)
+            event_idxs = self.last_60_event_indices.gather(-1, actions)
+            self.last_60_pull_events[
+                envs_idxs,
+                players_idxs,
+                actions[:,[1,0]].view(-1),
+                event_idxs[:,[1,0]].view(-1)
+            ] = 0.
             self.last_60_pull_events[
                 envs_idxs,
                 players_idxs,
                 actions.view(-1),
-                event_indices
+                event_idxs.view(-1)
             ] = 1.
             self.last_60_reward_events[
                 envs_idxs,
                 players_idxs,
+                actions[:,[1,0]].view(-1),
+                event_idxs[:,[1,0]].view(-1)
+            ] = 0.
+            self.last_60_reward_events[
+                envs_idxs,
+                players_idxs,
                 actions.view(-1),
-                event_indices
+                event_idxs.view(-1)
             ] = pull_rewards.view(-1)
             self.last_60_event_timestamps[
                 envs_idxs,
-                players_idxs,
+                :,
                 actions.view(-1),
-                event_indices
+                event_idxs.view(-1)
             ] = float(self.timestep) / self.n_steps
-            self.last_60_event_indices[
-                envs_idxs,
-                players_idxs,
-                actions.view(-1)
-            ] += 1
+            self.last_60_event_indices.scatter_(-1, actions, event_idxs + 1)
+            # This will lose information after the 60th event, but this should happen rarely
+            self.last_60_event_indices = torch.where(
+                self.last_60_event_indices > 59,
+                torch.zeros_like(self.last_60_event_indices) + 59,
+                self.last_60_event_indices
+            )
 
         if self.reward_type == EVERY_STEP_TRUE:
             rewards = pull_rewards
@@ -480,7 +488,7 @@ class KaggleMABEnvTorchVectorized:
             self.n_bandits,
             -1
         )
-        all_steps = torch.nn.functional.pad(all_steps, (30-time*3, 0), "constant", -1.)
+        all_steps = torch.nn.functional.pad(all_steps, (max(30-time*3, 0), 0), "constant", NO_INFO_VAL)
         summed_obs = self._get_summed_obs()
         result = torch.cat([all_steps, summed_obs], dim=3)
         return result
@@ -491,8 +499,8 @@ class KaggleMABEnvTorchVectorized:
         # Each actor receives a tensor of shape: (1, 1, n_bandits, 60 * (n_players+2))
         # The overall obs tensor shape is: (n_envs, n_players, n_bandits, 60 * (n_players+2))
         # 60 * (n_players+2): 60 events * (my_pull, opp_pull, my_reward, timestamp)
-        # The output is a mostly sparse tensor, where each pull and reward value is either -1., 0. or 1.
-        # -1. indicates that the event has not yet happened
+        # The output is a mostly sparse tensor, where each pull and reward value is either NO_INFO_VAL, 0. or 1.
+        # NO_INFO_VAL indicates that the event has not yet happened
         # The timestamps are in the range 0. to 1., depending on when the event occurred
         if not self.store_events:
             raise RuntimeError('This environment is not storing last_60_events information')
