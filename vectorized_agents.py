@@ -296,7 +296,7 @@ class SavedRLAgent(VectorizedAgent):
                 skip_connection_n=1
             )
             self.obs_type = ve.SUMMED_OBS
-        elif agent_name == 'awac_agent_small_8_64_32_1_norm_v1-230':
+        elif agent_name == 'awac_agent_small_8_64_32_1_norm_v2-750':
             self.model = gnn.GraphNNActorCritic(
                 in_features=4,
                 n_nodes=100,
