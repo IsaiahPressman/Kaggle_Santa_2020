@@ -39,6 +39,7 @@ OBS_TYPES = (
 
 NO_INFO_VAL = 0.
 
+
 # A vectorized and GPU-compatible recreation of the kaggle "MAB" environment
 class KaggleMABEnvTorchVectorized:
     def __init__(
@@ -117,9 +118,12 @@ class KaggleMABEnvTorchVectorized:
         self.all_pulls_onehot = None
         self.all_pull_rewards_onehot = None
         self.store_every_step = (
-                self.obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED, SUMMED_AND_LAST_TEN) or
-                self.opponent_obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED, SUMMED_AND_LAST_TEN)
+                self.obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED) or
+                self.opponent_obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED)
         )
+        self.last_10_pulls = None
+        self.last_10_rewards = None
+        self.store_last_ten = self.obs_type == SUMMED_AND_LAST_TEN or self.opponent_obs_type == SUMMED_AND_LAST_TEN
         self.last_60_pull_events = None
         self.last_60_reward_events = None
         self.last_60_event_timestamps = None
@@ -168,6 +172,10 @@ class KaggleMABEnvTorchVectorized:
             self.all_pulls_onehot = torch.zeros((self.n_envs, self.n_players, self.n_bandits, self.n_steps),
                                                 device=self.env_device, dtype=torch.float) + NO_INFO_VAL
             self.all_pull_rewards_onehot = torch.zeros_like(self.all_pulls_onehot) + NO_INFO_VAL
+        if self.store_last_ten:
+            self.last_10_pulls = torch.zeros((self.n_envs, self.n_players, self.n_bandits, 10),
+                                             device=self.env_device, dtype=torch.float) + NO_INFO_VAL
+            self.last_10_rewards = torch.zeros_like(self.last_10_pulls)
         if self.store_events:
             self.last_60_pull_events = torch.zeros((self.n_envs, self.n_players, self.n_bandits, 60),
                                                    device=self.env_device, dtype=torch.float) + NO_INFO_VAL
@@ -264,13 +272,22 @@ class KaggleMABEnvTorchVectorized:
                 actions.view(-1),
                 timestep_idxs
             ] = pull_rewards.view(-1)
+        if self.store_last_ten:
+            self.last_10_pulls = torch.cat([
+                self.last_10_pulls,
+                self.last_pulls.clone().unsqueeze(-1)
+            ], dim=-1)[:, :, :, 1:]
+            self.last_10_rewards = torch.cat([
+                self.last_10_rewards,
+                self.last_rewards.clone().unsqueeze(-1)
+            ], dim=-1)[:, :, :, 1:]
         if self.store_events:
             event_idxs = self.last_60_event_indices.gather(-1, actions)
             self.last_60_pull_events[
                 envs_idxs,
                 players_idxs,
-                actions[:,[1,0]].view(-1),
-                event_idxs[:,[1,0]].view(-1)
+                actions[:, [1, 0]].view(-1),
+                event_idxs[:, [1, 0]].view(-1)
             ] = 0.
             self.last_60_pull_events[
                 envs_idxs,
@@ -281,8 +298,8 @@ class KaggleMABEnvTorchVectorized:
             self.last_60_reward_events[
                 envs_idxs,
                 players_idxs,
-                actions[:,[1,0]].view(-1),
-                event_idxs[:,[1,0]].view(-1)
+                actions[:, [1, 0]].view(-1),
+                event_idxs[:, [1, 0]].view(-1)
             ] = 0.
             self.last_60_reward_events[
                 envs_idxs,
@@ -481,7 +498,7 @@ class KaggleMABEnvTorchVectorized:
 
     def _get_summed_obs_and_last_ten(self):
         # The overall obs tensor shape is: (n_envs, n_players, n_bandits, 3+10 * n(_players+1))
-        time = self.timestep
+        """time = self.timestep
         all_steps = self._get_every_step_obs()[:, :, :, max(0, time-10):time, :].view(
             self.n_envs,
             self.n_players,
@@ -491,7 +508,28 @@ class KaggleMABEnvTorchVectorized:
         all_steps = torch.nn.functional.pad(all_steps, (max(30-time*3, 0), 0), "constant", NO_INFO_VAL)
         summed_obs = self._get_summed_obs()
         result = torch.cat([all_steps, summed_obs], dim=3)
-        return result
+        return result"""
+        if not self.store_last_ten:
+            raise RuntimeError('This environment is not storing last_ten information')
+        if self.n_players == 1:
+            obs = torch.stack([
+                self.last_10_pulls,
+                self.last_10_rewards
+            ], dim=-1)
+        else:
+            last_10_pulls_relative = torch.stack([
+                self.last_10_pulls,
+                self.last_10_pulls[:, [1, 0], :]
+            ], dim=-1)
+            obs = torch.cat([
+                last_10_pulls_relative,
+                self.last_10_rewards.unsqueeze(-1)
+            ], dim=-1)
+        obs = torch.cat([
+            obs.view(self.n_envs, self.n_players, self.n_bandits, -1),
+            self._get_summed_obs() * self.obs_norm_dict[SUMMED_OBS]
+        ], dim=-1)
+        return obs.detach()
 
     def _get_last_60_events_obs(self):
         # Return an observation with information about the last 60 "events" per arm
