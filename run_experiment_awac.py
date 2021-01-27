@@ -20,14 +20,14 @@ DEVICE = torch.device('cuda')
 OBS_NORM = 100. / 1999.
 
 graph_nn_kwargs = dict(
-    in_features=4,
+    in_features=240,
     n_nodes=100,
-    n_hidden_layers=16,
-    layer_sizes=[64]*8 + [32]*9,
-    layer_class=gnn.SmallMeanGNNLayer,
+    n_hidden_layers=4,
     preprocessing_layer=False,
+    layer_sizes=[64],
+    layer_class=gnn.FullyConnectedGNNLayer,
     normalize=True,
-    skip_connection_n=1,
+    skip_connection_n=1
 )
 model = gnn.GraphNNActorCritic(**graph_nn_kwargs)
 """
@@ -41,8 +41,9 @@ model.to(device=DEVICE)
 optimizer = AdaBelief(model.parameters(),
                       lr=1e-4,
                       betas=(0.9, 0.999),
-                      eps=1e-12,
-                      weight_decay=5e-6,
+                      eps=1e-10,
+                      weight_decay=1e-5,
+                      #weight_decay=0.,
                       weight_decouple=False,
                       rectify=True,
                       fixed_decay=False,
@@ -59,15 +60,15 @@ env_kwargs = dict(
     out_device=DEVICE,
     normalize_reward=False,
     reward_type=ve.EVERY_STEP_EV_ZEROSUM,
-    obs_type=ve.SUMMED_OBS_WITH_TIMESTEP,
+    obs_type=ve.LAST_60_EVENTS_OBS
 )
 rl_train_kwargs = dict(
     batch_size=1024,
-    n_pretrain_batches=10000,
-    #n_pretrain_batches=0,
+    #n_pretrain_batches=10000,
+    n_pretrain_batches=0,
     n_steps_per_epoch=1999,
     n_train_batches_per_epoch=None,
-    gamma=0.9995,
+    gamma=0.999,
     lagrange_multiplier=1.
 )
 
@@ -76,9 +77,9 @@ replay_s_a_r_d_s = load_s_a_r_d_s(
 )
 replay_buffer = BasicReplayBuffer(
     s_shape=(graph_nn_kwargs['n_nodes'], graph_nn_kwargs['in_features']),
-    max_len=1e6,
-    #starting_s_a_r_d_s=None,
-    starting_s_a_r_d_s=replay_s_a_r_d_s
+    max_len=3e4,
+    starting_s_a_r_d_s=None,
+    #starting_s_a_r_d_s=replay_s_a_r_d_s
 )
 # Conserve memory
 del replay_s_a_r_d_s
@@ -97,22 +98,22 @@ validation_env_kwargs_base = dict(
     obs_type=env_kwargs['obs_type']
 )
 validation_opponent_env_kwargs = [
+    #dict(
+    #    opponent=va.BasicThompsonSampling(),
+    #    opponent_obs_type=ve.SUMMED_OBS
+    #),
     dict(
-        opponent=va.BasicThompsonSampling(OBS_NORM),
-        opponent_obs_type=ve.SUMMED_OBS
-    ),
-    dict(
-        opponent=va.PullVegasSlotMachinesImproved(OBS_NORM),
+        opponent=va.PullVegasSlotMachinesImproved(),
         opponent_obs_type=ve.SUMMED_OBS
     ),
     dict(
         opponent=va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE, deterministic_policy=True),
         opponent_obs_type=ve.SUMMED_OBS
     ),
-    #dict(
-    #    opponent=va.SavedRLAgent('awac_agent_4_20_1_norm_v1-215', device=DEVICE, deterministic_policy=True),
-    #    opponent_obs_type=ve.SUMMED_OBS_WITH_TIMESTEP
-    #)
+    dict(
+        opponent=va.SavedRLAgent('awac_agent_small_8_64_32_1_norm_v2-750', device=DEVICE, deterministic_policy=True),
+        opponent_obs_type=ve.SUMMED_OBS_WITH_TIMESTEP
+    )
 ]
 validation_env_kwargs_dicts = []
 for opponent_kwargs in validation_opponent_env_kwargs:
@@ -141,12 +142,12 @@ awac_alg = AWACVectorized(model, optimizer, replay_buffer,
                           deterministic_validation_policy=False,
                           device=DEVICE,
                           exp_folder=Path(f'runs/awac/{folder_name}'),
-                          clip_grads=10.,
-                          checkpoint_freq=10)
+                          clip_grads=None,
+                          checkpoint_freq=20)
 this_script = Path(__file__).absolute()
 shutil.copy(this_script, awac_alg.exp_folder / f'_{this_script.name}')
 
-env_kwargs['n_envs'] = 32
+env_kwargs['n_envs'] = 10
 #env_kwargs['opponent'] = va.BasicThompsonSampling(OBS_NORM)
 #env_kwargs['opponent'] = va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE, deterministic_policy=False)
 #env_kwargs['opponent_obs_type'] = ve.SUMMED_OBS

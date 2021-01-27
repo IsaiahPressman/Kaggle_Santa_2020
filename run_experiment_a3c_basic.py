@@ -65,7 +65,7 @@ initial_opponent_pool = [
 ]
 
 #folder_name = f"small_{graph_nn_kwargs['n_hidden_layers']}_{graph_nn_kwargs['layer_sizes']}_v2"
-folder_name = 'MeanMax3'
+folder_name = 'MeanMax4'
 a3c_alg = A3CVectorized(model_constructor, optimizer, env_kwargs['obs_type'], model=model, device=DEVICE,
                         exp_folder=Path(f'runs/a3c/{folder_name}'),
                         recurrent_model=False,
