@@ -268,11 +268,11 @@ class KaggleMABEnvTorchVectorized:
             players_idxs,
             actions.view(-1)
         ] = pull_rewards.view(-1)
-        self.decay_pulls=self.decay_pulls+self.last_pulls.unsqueeze(dim=-1)
-        self.decay_rewards =self.decay_rewards+self.last_rewards.unsqueeze(dim=-1)
         decay_rates=torch.exp(-1*torch.arange(self.n_decay,device=self.env_device).float()).reshape(1,1,1,-1)
-        self.decay_pulls*=decay_rates
-        self.decay_rewards*=decay_rates
+        self.decay_pulls=self.decay_pulls+self.last_pulls.unsqueeze(dim=-1)*decay_rates
+        self.decay_rewards =self.decay_rewards+self.last_rewards.unsqueeze(dim=-1)*decay_rates
+        self.decay_pulls=self.decay_pulls*(1-decay_rates)
+        self.decay_rewards=self.decay_rewards*(1-decay_rates)
         # Used when obs_type == EVERY_STEP_OBS
         if self.store_every_step:
             timestep_idxs = torch.zeros_like(envs_idxs) + self.timestep - 1
