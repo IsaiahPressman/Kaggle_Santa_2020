@@ -303,7 +303,6 @@ class SavedRLAgent(VectorizedAgent):
                 n_hidden_layers=8,
                 layer_sizes=([64]*4) + ([32]*5),
                 layer_class=gnn.SmallFullyConnectedGNNLayer,
-                preprocessing_layer=False,
                 skip_connection_n=1,
                 normalize=True
             )

@@ -15,7 +15,8 @@ EVERY_STEP_OBS_RAVELLED = 'every_step_obs_ravelled'
 SUMMED_AND_LAST_TEN='summed_and_last_ten'
 SUMMED_AND_LAST_TEN = 'summed_and_last_ten'
 LAST_60_EVENTS_OBS = 'last_60_events_obs'
-LAST_60_EVENTS_AND_SUMMED_OBS = 'last_60_events_and_summed_obs'
+LAST_60_EVENTS_OBS_RAVELLED = 'last_60_events_obs_ravelled'
+LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED = 'last_60_events_and_summed_obs_ravelled'
 DECAYING_OBS = 'decaying_obs'
 SUMMED_AND_DECAY='summed_and_decay'
 REWARD_TYPES = (
@@ -35,7 +36,8 @@ OBS_TYPES = (
     SUMMED_AND_LAST_TEN,
     SUMMED_AND_DECAY,
     LAST_60_EVENTS_OBS,
-    LAST_60_EVENTS_AND_SUMMED_OBS,
+    LAST_60_EVENTS_OBS_RAVELLED,
+    LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED,
     DECAYING_OBS
 )
 
@@ -105,9 +107,9 @@ class KaggleMABEnvTorchVectorized:
             EVERY_STEP_OBS_RAVELLED: 1.,
             SUMMED_AND_LAST_TEN:1.,
             LAST_60_EVENTS_OBS: 1.,
-            LAST_60_EVENTS_AND_SUMMED_OBS: 1.,
-            DECAYING_OBS: 1.,
-            SUMMED_AND_DECAY: 1.
+            LAST_60_EVENTS_OBS_RAVELLED: 1.,
+            LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED: 1.,
+            SUMMED_AND_DECAY: 1.,
         }
         if self.obs_type not in self.obs_norm_dict.keys():
             raise RuntimeError(f'obs_type "{self.obs_type}" does not have a defined obs_norm')
@@ -133,8 +135,12 @@ class KaggleMABEnvTorchVectorized:
         self.last_60_event_timestamps = None
         self.last_60_event_indices = None
         self.store_events = (
-                self.obs_type in (LAST_60_EVENTS_OBS, LAST_60_EVENTS_AND_SUMMED_OBS) or
-                self.opponent_obs_type in (LAST_60_EVENTS_OBS, LAST_60_EVENTS_AND_SUMMED_OBS)
+                self.obs_type in (LAST_60_EVENTS_OBS,
+                                  LAST_60_EVENTS_OBS_RAVELLED,
+                                  LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED) or
+                self.opponent_obs_type in (LAST_60_EVENTS_OBS,
+                                           LAST_60_EVENTS_OBS_RAVELLED,
+                                           LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED)
         )
         self.reset()
         
@@ -201,30 +207,7 @@ class KaggleMABEnvTorchVectorized:
     def step(self, actions):
         actions = actions.to(self.env_device)
         if self.opponent is not None:
-            if self.opponent_obs_type == SUMMED_OBS:
-                opp_obs = self._get_summed_obs()
-            if self.opponent_obs_type == SUMMED_AND_DECAY:
-                opp_obs = self._get_summed_and_decay_obs()
-            elif self.opponent_obs_type == SUMMED_OBS_WITH_TIMESTEP:
-                opp_obs = self._get_summed_obs_with_timestep() 
-            elif self.opponent_obs_type == SUMMED_OBS_NOISE:
-                opp_obs = self._get_summed_obs_noise() 
-            elif self.opponent_obs_type == LAST_STEP_OBS:
-                opp_obs = self._get_last_step_obs()
-            elif self.opponent_obs_type == EVERY_STEP_OBS:
-                opp_obs = self._get_every_step_obs()
-            elif self.opponent_obs_type == EVERY_STEP_OBS_RAVELLED:
-                opp_obs = self._get_every_step_obs_ravelled()
-            elif self.opponent_obs_type == SUMMED_AND_LAST_TEN:
-                opp_obs = self._get_summed_obs_and_last_ten()
-            elif self.opponent_obs_type == LAST_60_EVENTS_OBS:
-                opp_obs = self._get_last_60_events_obs()
-            elif self.opponent_obs_type == LAST_60_EVENTS_AND_SUMMED_OBS:
-                opp_obs = self._get_last_60_events_and_summed_obs()
-            elif self.opponent_obs_type == DECAYING_OBS:
-                opp_obs = self._get_decaying_obs()
-            else:
-                raise ValueError(f'Unsupported opponent obs_type {self.opponent_obs_type}')
+            opp_obs = self._get_obs(self.opponent_obs_type)
             opp_obs = opp_obs * self.opponent_obs_norm
             opp_actions = self.opponent(opp_obs[:, 1].unsqueeze(1))
             actions = torch.cat([actions, opp_actions], dim=1)
@@ -365,31 +348,36 @@ class KaggleMABEnvTorchVectorized:
     
     @property
     def obs(self):
-        if self.obs_type == SUMMED_OBS:
+        return self._get_obs(self.obs_type) * self.obs_norm
+
+    def _get_obs(self, obs_type):
+        if obs_type == SUMMED_OBS:
             obs = self._get_summed_obs()
-        if self.obs_type == SUMMED_AND_DECAY:
-            obs = self._get_summed_and_decay_obs()
-        elif self.obs_type == SUMMED_OBS_WITH_TIMESTEP:
+        elif obs_type == SUMMED_OBS_WITH_TIMESTEP:
             obs = self._get_summed_obs_with_timestep()
-        elif self.obs_type == SUMMED_OBS_NOISE:
-            obs = self._get_summed_obs_noise() 
-        elif self.obs_type == LAST_STEP_OBS:
+        elif obs_type == SUMMED_OBS_NOISE:
+            obs = self._get_summed_obs_noise()
+        elif obs_type == LAST_STEP_OBS:
             obs = self._get_last_step_obs()
-        elif self.obs_type == EVERY_STEP_OBS:
+        elif obs_type == EVERY_STEP_OBS:
             obs = self._get_every_step_obs()
-        elif self.obs_type == EVERY_STEP_OBS_RAVELLED:
+        elif obs_type == EVERY_STEP_OBS_RAVELLED:
             obs = self._get_every_step_obs_ravelled()
-        elif self.obs_type == SUMMED_AND_LAST_TEN:
+        elif obs_type == SUMMED_AND_LAST_TEN:
             obs = self._get_summed_obs_and_last_ten()
-        elif self.obs_type == LAST_60_EVENTS_OBS:
+        elif obs_type == LAST_60_EVENTS_OBS:
             obs = self._get_last_60_events_obs()
-        elif self.obs_type == LAST_60_EVENTS_AND_SUMMED_OBS:
-            obs = self._get_last_60_events_and_summed_obs()
-        elif self.obs_type == DECAYING_OBS:
+        elif obs_type == LAST_60_EVENTS_OBS_RAVELLED:
+            obs = self._get_last_60_events_obs_ravelled()
+        elif obs_type == LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED:
+            obs = self._get_last_60_events_and_summed_obs_ravelled()
+        elif obs_type == SUMMED_AND_DECAY:
+            obs = self._get_summed_and_decay_obs()
+        elif obs_type == DECAYING_OBS:
             obs = self._get_decaying_obs()
         else:
-            raise ValueError(f'Unsupported obs_type: {self.obs_type}')
-        return obs * self.obs_norm
+            raise ValueError(f'Unsupported obs_type: {obs_type}')
+        return obs
 
     def _get_summed_obs(self):
         # Each actor receives a tensor of shape: (1, 1, n_bandits, n_players+1) (including pull_rewards)
@@ -581,12 +569,15 @@ class KaggleMABEnvTorchVectorized:
                 self.last_60_reward_events.unsqueeze(-1),
                 self.last_60_event_timestamps.unsqueeze(-1),
             ], dim=-1)
-        return obs.view(self.n_envs, self.n_players, self.n_bandits, -1)
+        return obs.detach()
 
-    def _get_last_60_events_and_summed_obs(self):
-        # _get_last_60_events_obs and _get_summed_obs_with_timestep concatenated
+    def _get_last_60_events_obs_ravelled(self):
+        return self._get_last_60_events_obs().view(self.n_envs, self.n_players, self.n_bandits, -1)
+
+    def _get_last_60_events_and_summed_obs_ravelled(self):
+        # _get_last_60_events_obs_ravelled and _get_summed_obs_with_timestep concatenated
         return torch.cat([
-            self._get_last_60_events_obs(),
+            self._get_last_60_events_obs_ravelled(),
             self._get_summed_obs_with_timestep() * self.obs_norm_dict[SUMMED_OBS_WITH_TIMESTEP]
         ], dim=-1)
 

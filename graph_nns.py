@@ -105,6 +105,7 @@ class MaxAndMeanGNNLayer(nn.Module):
     def reset_hidden_states(self):
         pass
 
+
 class SqueezeExictationGNNLayer(nn.Module):
     def __init__(self, n_nodes, in_features, out_features,
                  activation_func=nn.ReLU(), normalize=False, squeeze_out=False,nheads=2):
@@ -238,7 +239,7 @@ class SmallMeanGNNLayer(nn.Module):
             self.norm_layer = nn.BatchNorm1d(out_features)
         else:
             self.norm_layer = None
-        self.recombine_features = nn.Linear(out_features * 2, out_features)
+        self.recombine_features = nn.Linear(in_features * 2, out_features)
         self.squeeze_out = squeeze_out
         # Initialize linear layer weights
         # default inintilizaer tends to work better for resnets
@@ -247,7 +248,7 @@ class SmallMeanGNNLayer(nn.Module):
 
     def forward(self, features):
         features_shape = features.shape
-        features = features.view(-1, *features_shape[-2:])
+        features = features.reshape(-1, *features_shape[-2:])
         messages = features.mean(dim=-2, keepdims=True).expand(-1, self.n_nodes, -1)
         out = self.recombine_features(torch.cat([features, messages], dim=-1))
         if self.normalize:
@@ -333,29 +334,45 @@ class GraphNNResidualBase(nn.Module):
 
     def detach_hidden_states(self):
         [layer.detach_hidden_states() for layer in self.layers]
+
+
+class GraphNNPreprocessingLayer(nn.Module):
+    def __init__(self, preprocessing_layer, mean_out=True, ravel_out=False):
+        super().__init__()
+        self.preprocessing_layer = preprocessing_layer
+        self.mean_out = mean_out
+        self.ravel_out = ravel_out
+        assert not (self.mean_out and self.ravel_out)
+
+    def forward(self, x):
+        out = self.preprocessing_layer(x)
+        if self.mean_out:
+            out = out.mean(dim=-2)
+        if self.ravel_out:
+            out = out.view(*out.shape[:-2], -1)
+        return out
         
         
 class GraphNNActorCritic(nn.Module):
     def __init__(self, in_features, n_nodes, n_hidden_layers, layer_sizes, layer_class,
-                 preprocessing_layer=False, skip_connection_n=1, **layer_class_kwargs):
+                 preprocessing_layer=None, skip_connection_n=1, **layer_class_kwargs):
         super().__init__()
         
         # Define network
         if type(layer_sizes) == int:
-            layer_sizes = [layer_sizes] * (n_hidden_layers + 1 + preprocessing_layer)
-        elif len(layer_sizes) == 1:
-            layer_sizes = layer_sizes * (n_hidden_layers + 1 + preprocessing_layer)
-        if len(layer_sizes) != n_hidden_layers + 1 + preprocessing_layer:
-            raise ValueError(f'len(layer_sizes) must equal n_hidden_layers + 1 (+ 1 again if preprocessing_layer), '
-                             f'was {len(layer_sizes)} but should have been {n_hidden_layers+1+preprocessing_layer}')
-        if preprocessing_layer:
-            layers = [nn.Sequential(nn.Linear(in_features, layer_sizes[0]),
-                                    layer_class_kwargs.get('activation_func', nn.ReLU())),
-                      layer_class(n_nodes, layer_sizes[0], layer_sizes[1], **layer_class_kwargs)]
+            layer_sizes = [layer_sizes]
+        if len(layer_sizes) == 1:
+            layer_sizes = layer_sizes * (n_hidden_layers + 1)
+        if len(layer_sizes) != n_hidden_layers + 1:
+            raise ValueError(f'len(layer_sizes) must equal n_hidden_layers + 1, '
+                             f'was {len(layer_sizes)} but should have been {n_hidden_layers + 1}')
+        if preprocessing_layer is None:
+            layers = []
         else:
-            layers = [layer_class(n_nodes, in_features, layer_sizes[0], **layer_class_kwargs)]
+            layers = [preprocessing_layer]
+        layers.append(layer_class(n_nodes, in_features, layer_sizes[0], **layer_class_kwargs))
         for i in range(n_hidden_layers):
-            layers.append(layer_class(n_nodes, layer_sizes[i+preprocessing_layer], layer_sizes[i+1+preprocessing_layer],
+            layers.append(layer_class(n_nodes, layer_sizes[i], layer_sizes[i + 1],
                                       **layer_class_kwargs))
         
         if skip_connection_n == 0:

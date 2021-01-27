@@ -60,7 +60,7 @@ env_kwargs = dict(
     out_device=DEVICE,
     normalize_reward=False,
     reward_type=ve.EVERY_STEP_EV_ZEROSUM,
-    obs_type=ve.LAST_60_EVENTS_OBS
+    obs_type=ve.LAST_60_EVENTS_OBS_RAVELLED
 )
 rl_train_kwargs = dict(
     batch_size=1024,
