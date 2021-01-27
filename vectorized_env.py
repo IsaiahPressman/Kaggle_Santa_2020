@@ -105,7 +105,7 @@ class KaggleMABEnvTorchVectorized:
             SUMMED_OBS_NOISE: self.n_bandits / self.n_steps,
             EVERY_STEP_OBS: 1.,
             EVERY_STEP_OBS_RAVELLED: 1.,
-            SUMMED_AND_LAST_TEN:1.,
+            SUMMED_AND_LAST_TEN: 1.,
             LAST_60_EVENTS_OBS: 1.,
             LAST_60_EVENTS_OBS_RAVELLED: 1.,
             LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED: 1.,
@@ -503,9 +503,16 @@ class KaggleMABEnvTorchVectorized:
         return self._get_every_step_obs().view(self.n_envs, self.n_players, self.n_bandits, -1)
     
     def _get_summed_and_decay_obs(self):
-        summed_obs=self._get_summed_obs()/self.n_steps
-        result=torch.cat([summed_obs,self.decay_pulls,self.decay_rewards],dim=3)
-        return result
+        summed_obs = self._get_summed_obs()
+        if self.n_players == 1:
+            obs = torch.cat([summed_obs, self.decay_pulls, self.decay_rewards], dim=-1)
+        else:
+            decay_pulls_relative = torch.cat([
+                self.decay_pulls,
+                self.decay_pulls[:, [1, 0], :]
+            ], dim=-1)
+            obs = torch.cat([summed_obs, decay_pulls_relative, self.decay_rewards], dim=-1)
+        return obs
     
     def _get_summed_obs_and_last_ten(self):
         # The overall obs tensor shape is: (n_envs, n_players, n_bandits, 3+10 * n(_players+1))
