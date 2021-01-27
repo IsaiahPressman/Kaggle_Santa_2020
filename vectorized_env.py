@@ -14,6 +14,7 @@ LAST_STEP_OBS = 'last_step_obs'
 EVERY_STEP_OBS = 'every_step_obs'
 EVERY_STEP_OBS_RAVELLED = 'every_step_obs_ravelled'
 SUMMED_AND_LAST_TEN='summed_and_last_ten'
+SUMMED_AND_DECAY='summed_and_decay'
 REWARD_TYPES = (
     EVERY_STEP_TRUE,
     EVERY_STEP_EV,
@@ -28,7 +29,8 @@ OBS_TYPES = (
     SUMMED_OBS_NOISE,
     EVERY_STEP_OBS,
     EVERY_STEP_OBS_RAVELLED,
-    SUMMED_AND_LAST_TEN
+    SUMMED_AND_LAST_TEN,
+    SUMMED_AND_DECAY,
 )
 
 
@@ -48,6 +50,7 @@ class KaggleMABEnvTorchVectorized:
         normalize_reward=False,
         env_device=torch.device('cuda'),
         out_device=torch.device('cuda'),
+        n_decay=5,
     ):
         # Assert parameter conditions
         assert 0 <= decay_rate <= 1.
@@ -60,7 +63,7 @@ class KaggleMABEnvTorchVectorized:
         self.n_steps = n_steps
         self.decay_rate = decay_rate
         self.sample_resolution = sample_resolution
-        
+        self.n_decay=n_decay
         self.n_envs = n_envs
         self.n_players = n_players
         if n_players > 2:
@@ -87,15 +90,15 @@ class KaggleMABEnvTorchVectorized:
         self.env_device = env_device
         self.out_device = out_device
 
-        if self.obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP, SUMMED_OBS_NOISE,SUMMED_AND_LAST_TEN):
+        if self.obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP, SUMMED_OBS_NOISE):
             self.obs_norm = self.n_bandits / self.n_steps
-        elif self.obs_type in (LAST_STEP_OBS, EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED):
+        elif self.obs_type in (LAST_STEP_OBS, EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED,SUMMED_AND_DECAY,SUMMED_AND_LAST_TEN):
             self.obs_norm = 1.
         else:
             raise ValueError(f'Unsupported obs_type: {self.obs_type}')
-        if self.opponent_obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP,SUMMED_OBS_NOISE,SUMMED_AND_LAST_TEN):
+        if self.opponent_obs_type in (SUMMED_OBS, SUMMED_OBS_WITH_TIMESTEP,SUMMED_OBS_NOISE):
             self.opponent_obs_norm = self.n_bandits / self.n_steps
-        elif self.opponent_obs_type in (LAST_STEP_OBS, EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED):
+        elif self.opponent_obs_type in (LAST_STEP_OBS, EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED,SUMMED_AND_DECAY,SUMMED_AND_LAST_TEN):
             self.opponent_obs_norm = 1.
         else:
             raise ValueError(f'Unsupported opponent obs_type: {self.opponent_obs_type}')
@@ -143,6 +146,11 @@ class KaggleMABEnvTorchVectorized:
         self.player_rewards_sums = torch.zeros_like(self.player_n_pulls)
         self.last_pulls = torch.zeros_like(self.player_n_pulls)
         self.last_rewards = torch.zeros_like(self.player_n_pulls)
+
+        self.decay_pulls=torch.zeros((self.n_envs, self.n_players, self.n_bandits,self.n_decay),
+                                          device=self.env_device, dtype=torch.float)
+        self.decay_rewards=torch.zeros((self.n_envs, self.n_players, self.n_bandits,self.n_decay),
+                                    device=self.env_device, dtype=torch.float)
         # For EVERY_STEP_OBS, store the action and pull_reward history
         # This is memory intensive, so is only done when necessary
         if self.store_every_step:
@@ -165,6 +173,8 @@ class KaggleMABEnvTorchVectorized:
         if self.opponent is not None:
             if self.opponent_obs_type == SUMMED_OBS:
                 opp_obs = self._get_summed_obs()
+            if self.opponent_obs_type == SUMMED_AND_DECAY:
+                opp_obs = self._get_summed_and_decay_obs()
             elif self.opponent_obs_type == SUMMED_OBS_WITH_TIMESTEP:
                 opp_obs = self._get_summed_obs_with_timestep() 
             elif self.opponent_obs_type == SUMMED_OBS_NOISE:
@@ -223,6 +233,11 @@ class KaggleMABEnvTorchVectorized:
             players_idxs,
             actions.view(-1)
         ] += pull_rewards.view(-1)
+        self.decay_pulls=self.decay_pulls+self.last_pulls.unsqueeze(dim=-1)
+        self.decay_rewards =self.decay_rewards+self.last_rewards.unsqueeze(dim=-1)
+        decay_rates=torch.exp(-1*torch.arange(self.n_decay,device=self.env_device).float()).reshape(1,1,1,-1)
+        self.decay_pulls*=decay_rates
+        self.decay_rewards*=decay_rates
         # Used when obs_type == EVERY_STEP_OBS
         if self.store_every_step:
             timestep_idxs = torch.zeros_like(envs_idxs) + self.timestep - 1
@@ -287,6 +302,8 @@ class KaggleMABEnvTorchVectorized:
     def obs(self):
         if self.obs_type == SUMMED_OBS:
             obs = self._get_summed_obs()
+        if self.obs_type == SUMMED_AND_DECAY:
+            obs = self._get_summed_and_decay_obs()
         elif self.obs_type == SUMMED_OBS_WITH_TIMESTEP:
             obs = self._get_summed_obs_with_timestep()
         elif self.obs_type == SUMMED_OBS_NOISE:
@@ -444,10 +461,13 @@ class KaggleMABEnvTorchVectorized:
         time=self.timestep
         all_steps=self._get_every_step_obs()[:,:,:,max(0,time-10):time,:].view(self.n_envs, self.n_players, self.n_bandits, -1)
         all_steps=torch.nn.functional.pad(all_steps,(30-time*3,0),"constant", 0)
-        summed_obs=self._get_summed_obs()
+        summed_obs=self._get_summed_obs()/self.n_steps
         result=torch.cat([all_steps,summed_obs],dim=3)
         return result
-
+    def _get_summed_and_decay_obs(self):
+        summed_obs=self._get_summed_obs()/self.n_steps
+        result=torch.cat([summed_obs,self.decay_pulls,self.decay_rewards],dim=3)
+        return result
     @property
     def thresholds(self):
         return self.orig_thresholds * (self.decay_rate ** self.player_n_pulls.sum(dim=1))
