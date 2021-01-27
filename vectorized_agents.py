@@ -11,7 +11,7 @@ import graph_nns as gnn
 import vectorized_env as ve
 
 
-def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, **env_kwargs):
+def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, display_out=True, return_reward=False, **env_kwargs):
     env_kwargs = copy(env_kwargs)
     assert 'opponent' not in env_kwargs.keys(), 'Pass opponent as p2 arg, not as opponent kwarg'
     if 'obs_type' not in env_kwargs.keys():
@@ -29,20 +29,27 @@ def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, **env_kwargs):
         except AttributeError:
             pass
 
+    rewards = []
     vs_env = ve.KaggleMABEnvTorchVectorized(opponent=p2, **env_kwargs)
-    s, _, _, _ = vs_env.reset()
-    for i in tqdm.trange(vs_env.n_steps):
-        s, _, _, _ = vs_env.step(p1(s))
+    s, r, _, _ = vs_env.reset()
+    rewards.append(r)
+    iterator = tqdm.trange if display_out else range
+    for i in iterator(vs_env.n_steps):
+        s, r, _, _ = vs_env.step(p1(s))
+        rewards.append(r)
     p1_scores, p2_scores = vs_env.player_rewards_sums.sum(-1).chunk(2, dim=1)
-    print(f'{p1_name} -vs- {p2_name}')
-    print(f'Mean scores: {p1_scores.mean():.2f} - {p2_scores.mean():.2f}')
-    print(f'Match score: {torch.sum(p1_scores > p2_scores)} - '
-          f'{torch.sum(p1_scores == p2_scores)} - '
-          f'{torch.sum(p1_scores < p2_scores)} '
-          f'({torch.sum(p1_scores > p2_scores) * 100. / vs_env.n_envs:.1f}% - '
-          f'{torch.sum(p1_scores == p2_scores) * 100. / vs_env.n_envs:.1f}% - '
-          f'{torch.sum(p1_scores < p2_scores) * 100. / vs_env.n_envs:.1f}%)')
-    time.sleep(0.5)
+    if display_out:
+        print(f'{p1_name} -vs- {p2_name}')
+        print(f'Mean scores: {p1_scores.mean():.2f} - {p2_scores.mean():.2f}')
+        print(f'Match score: {torch.sum(p1_scores > p2_scores)} - '
+              f'{torch.sum(p1_scores == p2_scores)} - '
+              f'{torch.sum(p1_scores < p2_scores)} '
+              f'({torch.sum(p1_scores > p2_scores) * 100. / vs_env.n_envs:.1f}% - '
+              f'{torch.sum(p1_scores == p2_scores) * 100. / vs_env.n_envs:.1f}% - '
+              f'{torch.sum(p1_scores < p2_scores) * 100. / vs_env.n_envs:.1f}%)')
+        time.sleep(0.5)
+    if return_reward:
+        return torch.stack(rewards, dim=0)
 
 
 class VectorizedAgent:
@@ -307,6 +314,28 @@ class SavedRLAgent(VectorizedAgent):
                 normalize=True
             )
             self.obs_type = ve.SUMMED_OBS_WITH_TIMESTEP
+        elif agent_name == 'a3c_agent_small_8_64_32_2_v1-11100':
+            self.model = gnn.GraphNNActorCritic(
+                in_features=244,
+                n_nodes=100,
+                n_hidden_layers=8,
+                layer_sizes=[64]*4 + [32]*5,
+                layer_class=gnn.SmallFullyConnectedGNNLayer,
+                normalize=False,
+                skip_connection_n=2
+            )
+            self.obs_type = ve.LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED
+        elif agent_name == 'a3c_agent_small_8_64_32_2_v2-30':
+            self.model = gnn.GraphNNActorCritic(
+                in_features=244,
+                n_nodes=100,
+                n_hidden_layers=8,
+                layer_sizes=[64] * 4 + [32] * 5,
+                layer_class=gnn.SmallFullyConnectedGNNLayer,
+                normalize=False,
+                skip_connection_n=2
+            )
+            self.obs_type = ve.LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED
         else:
             raise ValueError(f'Unrecognized agent_name: {agent_name}')
         with open(f'saved_rl_models/{agent_name}.txt', 'r') as f:
