@@ -355,7 +355,7 @@ class GraphNNPreprocessingLayer(nn.Module):
         
 class GraphNNActorCritic(nn.Module):
     def __init__(self, in_features, n_nodes, n_hidden_layers, layer_sizes, layer_class,
-                 preprocessing_layer=None, skip_connection_n=1, **layer_class_kwargs):
+                 preprocessing_layer=None, skip_connection_n=1, deprecated_version=False, **layer_class_kwargs):
         super().__init__()
         
         # Define network
@@ -366,11 +366,15 @@ class GraphNNActorCritic(nn.Module):
         if len(layer_sizes) != n_hidden_layers + 1:
             raise ValueError(f'len(layer_sizes) must equal n_hidden_layers + 1, '
                              f'was {len(layer_sizes)} but should have been {n_hidden_layers + 1}')
-        if preprocessing_layer is None:
-            layers = []
+        layers = []
+        if preprocessing_layer is not None:
+            layers.append(preprocessing_layer)
+        if deprecated_version:
+            layer_class_kwargs_copy = copy(layer_class_kwargs)
+            layer_class_kwargs_copy.pop('normalize', None)
+            layers.append(layer_class(n_nodes, in_features, layer_sizes[0], **layer_class_kwargs_copy))
         else:
-            layers = [preprocessing_layer]
-        layers.append(layer_class(n_nodes, in_features, layer_sizes[0], **layer_class_kwargs))
+            layers.append(layer_class(n_nodes, in_features, layer_sizes[0], **layer_class_kwargs))
         for i in range(n_hidden_layers):
             layers.append(layer_class(n_nodes, layer_sizes[i], layer_sizes[i + 1],
                                       **layer_class_kwargs))
@@ -379,16 +383,16 @@ class GraphNNActorCritic(nn.Module):
             self.base = nn.Sequential(*layers)
         else:
             self.base = GraphNNResidualBase(layers, skip_connection_n)
-        layer_class_kwargs = copy(layer_class_kwargs)
-        layer_class_kwargs.pop('activation_func', None)
-        layer_class_kwargs.pop('normalize', None)
+        layer_class_kwargs_copy = copy(layer_class_kwargs)
+        layer_class_kwargs_copy.pop('activation_func', None)
+        layer_class_kwargs_copy.pop('normalize', None)
         self.actor = layer_class(n_nodes, layer_sizes[-1], 1,
                                  activation_func=nn.Identity(), squeeze_out=True,
-                                 **layer_class_kwargs
+                                 **layer_class_kwargs_copy
                                  )
         self.critic = layer_class(n_nodes, layer_sizes[-1], 1,
                                   activation_func=nn.Identity(), squeeze_out=True,
-                                  **layer_class_kwargs
+                                  **layer_class_kwargs_copy
                                   )
     
     def forward(self, states):
@@ -424,6 +428,85 @@ class GraphNNActorCritic(nn.Module):
         self.base.detach_hidden_states()
         self.actor.detach_hidden_states()
         self.critic.detach_hidden_states()
+
+
+class LearnableWeightsModel(nn.Module):
+    def __init__(self, n_nodes, n_models, hidden_layer_size, activation_func=nn.ReLU()):
+        super().__init__()
+        self.processing_layer = SmallFullyConnectedGNNLayer(n_nodes, n_models * 2, hidden_layer_size,
+                                                            activation_func=activation_func)
+        self.weights_out = SmallFullyConnectedGNNLayer(n_nodes, hidden_layer_size, n_models,
+                                                       activation_func=nn.Identity())
+        self.value_out = SmallFullyConnectedGNNLayer(n_nodes, hidden_layer_size, 1,
+                                                     squeeze_out=True, activation_func=nn.Identity())
+
+    def forward(self, logits, values):
+        values = values.unsqueeze(dim=-2).expand_as(logits)
+        x = torch.cat([logits, values], dim=-1)
+        x = self.processing_layer(x)
+        weights = self.weights_out(x).mean(dim=-2, keepdims=True)
+        weights = F.softmax(weights, dim=-1)
+        values = self.value_out(x).mean(dim=-1)
+
+        return values, weights
+
+
+class GraphNNActorCriticEnsemble(nn.Module):
+    def __init__(self, actor_critic_models, learnable_weights_model=None, weight_logits=False):
+        super().__init__()
+        self.models = nn.ModuleList(actor_critic_models)
+        for m in self.models:
+            for param in m.parameters():
+                param.requires_grad = False
+        self.learnable_weights_model = learnable_weights_model
+        self.weight_logits = weight_logits
+        # Register weight_logits to prevent later accidentally loading the model with the wrong setting
+        self.register_weight_logits = nn.Parameter(
+            torch.zeros(int(self.weight_logits) + 1),
+            requires_grad=False
+        )
+
+    def forward(self, states):
+        logits = []
+        values = []
+        for m in self.models:
+            l, v = m(states)
+            logits.append(l)
+            values.append(v)
+        logits = torch.stack(logits, dim=-1)
+        values = torch.stack(values, dim=-1)
+        if self.learnable_weights_model is not None:
+            values, weights = self.learnable_weights_model(logits, values)
+        else:
+            values = values.mean(dim=-1)
+            weights = torch.ones_like(logits) / logits.shape[-1]
+
+        # Original way:
+        if self.weight_logits:
+            logits = torch.sum(logits * weights, dim=-1)
+            probs = F.softmax(logits, dim=-1)
+        else:
+            probs = torch.sum(F.softmax(logits, dim=-2) * weights, dim=-1)
+        return probs, values
+
+    def choose_best_action(self, states):
+        with torch.no_grad():
+            probs, _ = self.forward(states)
+            return probs.argmax(dim=-1)
+
+    def sample_action(self, states, train=False):
+        if train:
+            probs, values = self.forward(states)
+        else:
+            with torch.no_grad():
+                probs, values = self.forward(states)
+        seq_len, n_envs, n_players, n_bandits = probs.shape
+        m = distributions.Categorical(probs.view(seq_len * n_envs * n_players, n_bandits))
+        sampled_actions = m.sample().view(seq_len, n_envs, n_players)
+        if train:
+            return sampled_actions, (probs, values)
+        else:
+            return sampled_actions
 
 
 class GraphNNPolicy(nn.Module):

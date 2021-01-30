@@ -16,6 +16,44 @@ with contextlib.redirect_stdout(io.StringIO()):
     import kaggle_environments
 
 
+def convert_replay_for_visualization(replay, my_team_idx):
+    try:
+        env = kaggle_environments.make(
+            'mab',
+            configuration=replay['configuration'],
+            steps=replay['steps'],
+            info=replay['info']
+        )
+    except kaggle_environments.InvalidArgument:
+        return None
+
+    actual_rewards = np.zeros((2, 2000), dtype=np.float)
+    expected_rewards = np.zeros((2, 2000), dtype=np.float)
+
+    for step_idx, step in enumerate(env.steps):
+        if step_idx == 0:
+            continue
+        for agent_idx, agent in enumerate(step):
+            action = agent['action']
+            thresholds = env.steps[step_idx - 1][0]['observation']['thresholds']
+            actual_rewards[agent_idx, step_idx] = agent['reward']
+            expected_rewards[agent_idx, step_idx] = np.ceil(thresholds[action]) / 100.
+    actual_advantage = actual_rewards - actual_rewards[[1, 0], :]
+    expected_advantage = expected_rewards - expected_rewards[[1, 0], :]
+
+    if my_team_idx == 1:
+        actual_rewards = actual_rewards[[1, 0], :]
+        expected_rewards = expected_rewards[[1, 0], :]
+        actual_advantage = actual_advantage[[1, 0], :]
+        expected_advantage = expected_advantage[[1, 0], :]
+    return {
+        'actual_rewards': np.diff(actual_rewards, axis=1),
+        'expected_rewards': expected_rewards[:, 1:],
+        'actual_advantage': np.diff(actual_advantage, axis=1),
+        'expected_advantage': expected_advantage[:, 1:]
+    }
+
+
 def convert_replays_to_s_a_r_d_s(replays, reward_type, obs_type, normalize_reward):
     assert len(replays) > 0
     kaggle_envs = [kaggle_environments.make(

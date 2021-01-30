@@ -11,7 +11,7 @@ import graph_nns as gnn
 import vectorized_env as ve
 
 
-def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, display_out=True, return_reward=False, **env_kwargs):
+def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, display_out=True, **env_kwargs):
     env_kwargs = copy(env_kwargs)
     assert 'opponent' not in env_kwargs.keys(), 'Pass opponent as p2 arg, not as opponent kwarg'
     if 'obs_type' not in env_kwargs.keys():
@@ -38,6 +38,7 @@ def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, display_out=True, retu
         s, r, _, _ = vs_env.step(p1(s))
         rewards.append(r)
     p1_scores, p2_scores = vs_env.player_rewards_sums.sum(-1).chunk(2, dim=1)
+    p1_mean_score = (torch.sum(p1_scores > p2_scores) + torch.sum(p1_scores == p2_scores) * 0.5) / vs_env.n_envs
     if display_out:
         print(f'{p1_name} -vs- {p2_name}')
         print(f'Mean scores: {p1_scores.mean():.2f} - {p2_scores.mean():.2f}')
@@ -48,8 +49,7 @@ def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, display_out=True, retu
               f'{torch.sum(p1_scores == p2_scores) * 100. / vs_env.n_envs:.1f}% - '
               f'{torch.sum(p1_scores < p2_scores) * 100. / vs_env.n_envs:.1f}%)')
         time.sleep(0.5)
-    if return_reward:
-        return torch.stack(rewards, dim=0)
+    return p1_mean_score.cpu().numpy().item(), torch.stack(rewards, dim=0)
 
 
 class VectorizedAgent:
@@ -59,6 +59,12 @@ class VectorizedAgent:
 
     def __call__(self, states):
         return None
+
+    def __eq__(self, other):
+        if isinstance(other, VectorizedAgent):
+            return self.name == other.name
+        else:
+            return False
 
     def reset(self):
         pass
@@ -242,8 +248,11 @@ class RandomAgent(VectorizedAgent):
 class SavedRLAgent(VectorizedAgent):
     def __init__(self, agent_name, device=torch.device('cuda'), deterministic_policy=False):
         super().__init__()
-        self.name = f'SavedRLAgent: {agent_name}'
-        if agent_name == 'a3c_agent_v0':
+        self.agent_name = agent_name
+        self.name = f'SavedRLAgent: {self.agent_name}'
+        if deterministic_policy:
+            self.name += '_deterministic'
+        if self.agent_name == 'a3c_agent_v0':
             self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
@@ -253,7 +262,7 @@ class SavedRLAgent(VectorizedAgent):
                 skip_connection_n=0
             )
             self.obs_type = ve.SUMMED_OBS
-        elif agent_name == 'a3c_agent_v1':
+        elif self.agent_name == 'a3c_agent_v1':
             self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
@@ -263,7 +272,7 @@ class SavedRLAgent(VectorizedAgent):
                 skip_connection_n=0
             )
             self.obs_type = ve.SUMMED_OBS
-        elif agent_name == 'a3c_agent_v2':
+        elif self.agent_name == 'a3c_agent_v2':
             self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
@@ -273,7 +282,7 @@ class SavedRLAgent(VectorizedAgent):
                 skip_connection_n=1
             )
             self.obs_type = ve.SUMMED_OBS
-        elif agent_name == 'a3c_agent_v3':
+        elif self.agent_name == 'a3c_agent_v3':
             self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
@@ -283,7 +292,7 @@ class SavedRLAgent(VectorizedAgent):
                 skip_connection_n=1
             )
             self.obs_type = ve.SUMMED_OBS
-        elif agent_name == 'a3c_agent_v4-162':
+        elif self.agent_name == 'a3c_agent_v4-162':
             self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
@@ -293,7 +302,7 @@ class SavedRLAgent(VectorizedAgent):
                 skip_connection_n=1
             )
             self.obs_type = ve.SUMMED_OBS
-        elif agent_name == 'a3c_agent_small_8_32-790':
+        elif self.agent_name == 'a3c_agent_small_8_32-790':
             self.model = gnn.GraphNNActorCritic(
                 in_features=3,
                 n_nodes=100,
@@ -303,7 +312,7 @@ class SavedRLAgent(VectorizedAgent):
                 skip_connection_n=1
             )
             self.obs_type = ve.SUMMED_OBS
-        elif agent_name == 'awac_agent_small_8_64_32_1_norm_v2-750':
+        elif self.agent_name == 'awac_agent_small_8_64_32_1_norm_v1-230':
             self.model = gnn.GraphNNActorCritic(
                 in_features=4,
                 n_nodes=100,
@@ -311,10 +320,11 @@ class SavedRLAgent(VectorizedAgent):
                 layer_sizes=([64]*4) + ([32]*5),
                 layer_class=gnn.SmallFullyConnectedGNNLayer,
                 skip_connection_n=1,
-                normalize=True
+                normalize=True,
+                deprecated_version=True
             )
             self.obs_type = ve.SUMMED_OBS_WITH_TIMESTEP
-        elif agent_name == 'a3c_agent_small_8_64_32_2_v1-11100':
+        elif self.agent_name == 'a3c_agent_small_8_64_32_2_v1-11100':
             self.model = gnn.GraphNNActorCritic(
                 in_features=244,
                 n_nodes=100,
@@ -325,7 +335,7 @@ class SavedRLAgent(VectorizedAgent):
                 skip_connection_n=2
             )
             self.obs_type = ve.LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED
-        elif agent_name == 'a3c_agent_small_8_64_32_2_v2-30':
+        elif self.agent_name == 'a3c_agent_small_8_64_32_2_v2-30':
             self.model = gnn.GraphNNActorCritic(
                 in_features=244,
                 n_nodes=100,
@@ -337,8 +347,8 @@ class SavedRLAgent(VectorizedAgent):
             )
             self.obs_type = ve.LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED
         else:
-            raise ValueError(f'Unrecognized agent_name: {agent_name}')
-        with open(f'saved_rl_models/{agent_name}.txt', 'r') as f:
+            raise ValueError(f'Unrecognized agent_name: {self.agent_name}')
+        with open(f'saved_rl_models/{self.agent_name}.txt', 'r') as f:
             sd = pickle.loads(base64.b64decode(f.readline()[2:-1].encode()))['model_state_dict']
         self.model.load_state_dict(sd)
         self.model.to(device=device)
@@ -349,6 +359,100 @@ class SavedRLAgent(VectorizedAgent):
         else:
             self.act_func = self.model.sample_action
         
+    def __call__(self, states):
+        states_device = states.device
+        actions = self.act_func(states.to(device=self.device).unsqueeze(0)).squeeze(0)
+        return actions.to(device=states_device)
+
+
+class SavedRLAgentEnsemble(VectorizedAgent):
+    def __init__(self, ensemble_name, device=torch.device('cuda'), weight_logits=False, deterministic_policy=False):
+        super().__init__()
+        self.ensemble_name = ensemble_name
+        self.name = f'SavedRLAgentEnsemble: {self.ensemble_name}'
+        if weight_logits:
+            self.name += '_weight_logits'
+        else:
+            self.name += '_weight_probs'
+        if deterministic_policy:
+            self.name += '_deterministic'
+        else:
+            self.name += '_stochastic'
+        models = []
+        if self.ensemble_name == 'a3c_agent_small_8_32':
+            for model_checkpoint in (410, 490, 540, 610, 790):
+                model = gnn.GraphNNActorCritic(
+                    in_features=3,
+                    n_nodes=100,
+                    n_hidden_layers=8,
+                    layer_sizes=32,
+                    layer_class=gnn.SmallFullyConnectedGNNLayer,
+                    skip_connection_n=1
+                )
+                run_folder = 'a3c/small_8_32/'
+                with open(f'runs/{run_folder}/{model_checkpoint}_cp.txt', 'r') as f:
+                    serialized_string = f.readline()[2:-1].encode()
+                state_dict_bytes = base64.b64decode(serialized_string)
+                loaded_state_dicts = pickle.loads(state_dict_bytes)
+                model.load_state_dict(loaded_state_dicts['model_state_dict'])
+                models.append(model)
+            self.obs_type = ve.SUMMED_OBS
+        elif self.ensemble_name == 'awac_agent_small_8_64_32_1_norm':
+            for model_checkpoint in (230, 355, 540, 600, 755):
+                model = gnn.GraphNNActorCritic(
+                    in_features=4,
+                    n_nodes=100,
+                    n_hidden_layers=8,
+                    layer_sizes=([64]*4) + ([32]*5),
+                    layer_class=gnn.SmallFullyConnectedGNNLayer,
+                    skip_connection_n=1,
+                    normalize=True,
+                    deprecated_version=True
+                )
+                run_folder = 'awac/small_8_64_32_1_norm_v1'
+                with open(f'runs/{run_folder}/{model_checkpoint}_cp.txt', 'r') as f:
+                    serialized_string = f.readline()[2:-1].encode()
+                state_dict_bytes = base64.b64decode(serialized_string)
+                loaded_state_dicts = pickle.loads(state_dict_bytes)
+                model.load_state_dict(loaded_state_dicts['model_state_dict'])
+                models.append(model)
+            self.obs_type = ve.SUMMED_OBS_WITH_TIMESTEP
+        elif self.ensemble_name == 'a3c_agent_small_8_64_32_2':
+            for model_checkpoint, run_folder in (
+                    (6500, 'a3c/small_8_64_32_2_v1/'),
+                    (11100, 'a3c/small_8_64_32_2_v1/'),
+                    (12500, 'a3c/small_8_64_32_2_v1/'),
+                    (17500, 'a3c/small_8_64_32_2_v1/'),
+                    (19200, 'a3c/small_8_64_32_2_v1/'),
+                    (30, 'a3c/small_8_64_32_2_v2/')
+            ):
+                model = gnn.GraphNNActorCritic(
+                    in_features=244,
+                    n_nodes=100,
+                    n_hidden_layers=8,
+                    layer_sizes=[64]*4 + [32]*5,
+                    layer_class=gnn.SmallFullyConnectedGNNLayer,
+                    normalize=False,
+                    skip_connection_n=2
+                )
+                with open(f'runs/{run_folder}/{model_checkpoint}_cp.txt', 'r') as f:
+                    serialized_string = f.readline()[2:-1].encode()
+                state_dict_bytes = base64.b64decode(serialized_string)
+                loaded_state_dicts = pickle.loads(state_dict_bytes)
+                model.load_state_dict(loaded_state_dicts['model_state_dict'])
+                models.append(model)
+            self.obs_type = ve.LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED
+        else:
+            raise ValueError(f'Unrecognized ensemble_name: {self.ensemble_name}')
+        self.ensemble_model = gnn.GraphNNActorCriticEnsemble(models, weight_logits=weight_logits)
+        self.ensemble_model.to(device=device)
+        self.ensemble_model.eval()
+        self.device = device
+        if deterministic_policy:
+            self.act_func = self.ensemble_model.choose_best_action
+        else:
+            self.act_func = self.ensemble_model.sample_action
+
     def __call__(self, states):
         states_device = states.device
         actions = self.act_func(states.to(device=self.device).unsqueeze(0)).squeeze(0)
