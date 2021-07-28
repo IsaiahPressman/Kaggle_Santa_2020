@@ -99,19 +99,19 @@ validation_env_kwargs_base = dict(
 validation_opponent_env_kwargs = [
     dict(
         opponent=va.BasicThompsonSampling(OBS_NORM),
-        opponent_obs_type=ve.SUMMED_OBS
+        opp_obs_type=ve.SUMMED_OBS
     ),
     dict(
         opponent=va.PullVegasSlotMachinesImproved(OBS_NORM),
-        opponent_obs_type=ve.SUMMED_OBS
+        opp_obs_type=ve.SUMMED_OBS
     ),
     dict(
         opponent=va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE, deterministic_policy=True),
-        opponent_obs_type=ve.SUMMED_OBS
+        opp_obs_type=ve.SUMMED_OBS
     ),
     #dict(
     #    opponent=va.SavedRLAgent('awac_agent_4_20_1_norm_v1-215', device=DEVICE, deterministic_policy=True),
-    #    opponent_obs_type=ve.SUMMED_OBS_WITH_TIMESTEP
+    #    opp_obs_type=ve.SUMMED_OBS_WITH_TIMESTEP
     #)
 ]
 validation_env_kwargs_dicts = []
@@ -149,7 +149,7 @@ shutil.copy(this_script, awac_alg.exp_folder / f'_{this_script.name}')
 env_kwargs['n_envs'] = 32
 #env_kwargs['opponent'] = va.BasicThompsonSampling(OBS_NORM)
 #env_kwargs['opponent'] = va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE, deterministic_policy=False)
-#env_kwargs['opponent_obs_type'] = ve.SUMMED_OBS
+#env_kwargs['opp_obs_type'] = ve.SUMMED_OBS
 try:
     awac_alg.train(
         ve.KaggleMABEnvTorchVectorized(**env_kwargs),

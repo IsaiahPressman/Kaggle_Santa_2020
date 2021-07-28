@@ -18,7 +18,7 @@ if DEVICE == torch.device('cpu'):
     n_envs = 50
 else:
     os.environ['OMP_NUM_THREADS'] = '8'
-    n_envs = 1000
+    n_envs = 200
 
 ENV_KWARGS = dict(
     n_envs=n_envs,
@@ -27,10 +27,20 @@ ENV_KWARGS = dict(
     reward_type=ve.EVERY_STEP_EV_ZEROSUM
 )
 
+all_ensemble_names = ['a3c_agent_small_8_32', 'awac_agent_small_8_64_32_1_norm', 'a3c_agent_small_8_64_32_2']
 PLAYER_1s = [
+    #va.SavedRLAgentMultiObsEnsemble(all_ensemble_names[:2], weight_logits=False, deterministic_policy=True),
+    #va.SavedRLAgentMultiObsEnsemble([all_ensemble_names[0], all_ensemble_names[2]], weight_logits=False, deterministic_policy=True),
+    #va.SavedRLAgentMultiObsEnsemble(all_ensemble_names[-2:], weight_logits=False, deterministic_policy=True),
+    va.SavedRLAgentMultiObsEnsemble(all_ensemble_names, weight_logits=False, deterministic_policy=True),
+
+    #va.SavedRLAgentMultiObsEnsemble(all_ensemble_names[:2], weight_logits=True, deterministic_policy=True),
+    #va.SavedRLAgentMultiObsEnsemble([all_ensemble_names[0], all_ensemble_names[2]], weight_logits=True, deterministic_policy=True),
+    ### LEFT OFF HERE:
+    #va.SavedRLAgentMultiObsEnsemble(all_ensemble_names[-2:], weight_logits=True, deterministic_policy=True),
+    va.SavedRLAgentMultiObsEnsemble(all_ensemble_names, weight_logits=True, deterministic_policy=True),
     # va.SavedRLAgentEnsemble('a3c_agent_small_8_64_32_2', weight_logits=True, device=DEVICE, deterministic_policy=True),
-    va.SavedRLAgentEnsemble('awac_agent_small_8_64_32_1_norm',
-                            weight_logits=False, device=DEVICE, deterministic_policy=True),
+    # va.SavedRLAgentEnsemble('awac_agent_small_8_64_32_1_norm', weight_logits=False, device=DEVICE, deterministic_policy=True),
     # va.SavedRLAgentEnsemble('a3c_agent_small_8_32', weight_logits=True, device=DEVICE, deterministic_policy=True),
     # va.SavedRLAgent('awac_agent_small_8_64_32_1_norm_v1-230', device=DEVICE, deterministic_policy=True),
     # va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE, deterministic_policy=True),
@@ -43,15 +53,14 @@ PLAYER_2s = [
     va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE, deterministic_policy=True),
     va.SavedRLAgent('awac_agent_small_8_64_32_1_norm_v1-230', deterministic_policy=True),
     va.SavedRLAgent('a3c_agent_small_8_64_32_2_v2-30', device=DEVICE, deterministic_policy=False),
-    va.SavedRLAgentEnsemble('a3c_agent_small_8_32', weight_logits=True, device=DEVICE, deterministic_policy=True),
+    #va.SavedRLAgentEnsemble('a3c_agent_small_8_32', weight_logits=True, device=DEVICE, deterministic_policy=True),
     va.SavedRLAgentEnsemble('a3c_agent_small_8_64_32_2', weight_logits=True, device=DEVICE, deterministic_policy=True),
-    va.SavedRLAgentEnsemble('awac_agent_small_8_64_32_1_norm',
-                            weight_logits=False, device=DEVICE, deterministic_policy=True),
+    #va.SavedRLAgentEnsemble('awac_agent_small_8_64_32_1_norm', weight_logits=False, device=DEVICE, deterministic_policy=True),
 ]
 
 
 def wrap_title(title):
-    return '\n'.join(wrap(title, 45, break_long_words=False))
+    return '\n'.join(wrap(title, 55, break_long_words=True))
 
 
 if __name__ == '__main__':
@@ -72,7 +81,7 @@ if __name__ == '__main__':
             fig, axes = plt.subplots(n_rows, n_cols, figsize=(8 * n_cols, 8 * n_rows))
             fig_title = (f'{player_1.name} -vs- {player_2.name}\n'
                          f'{p1_score * 100.:.2f}% winrate over {rewards_over_time.shape[1]} games')
-            fig.suptitle(fig_title)
+            fig.suptitle(wrap_title(fig_title))
             axes = axes.ravel()
 
             axes[0].plot(np.cumsum(rewards_over_time.mean(axis=1)))
@@ -120,7 +129,7 @@ if __name__ == '__main__':
                 axes[3].legend()
             axes[3].set_title(wrap_title(f"{player_1.name} per-step expected advantage over time (percentiles)"))
 
-            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+            plt.tight_layout(rect=[0., 0., 1., 0.9])
 
             p_names_abbrev = []
             for p in (player_1, player_2):
@@ -130,8 +139,11 @@ if __name__ == '__main__':
                         p_names_abbrev[-1] += '_deterministic'
                     else:
                         p_names_abbrev[-1] += '_stochastic'
-                elif type(p) == va.SavedRLAgentEnsemble:
-                    p_names_abbrev.append(f'ensemble_{p.ensemble_name}')
+                elif type(p) in (va.SavedRLAgentEnsemble, va.SavedRLAgentMultiObsEnsemble):
+                    if type(p) == va.SavedRLAgentEnsemble:
+                        p_names_abbrev.append(f'ensemble_{p.ensemble_name}')
+                    else:
+                        p_names_abbrev.append(f'multiObsEnsemble_{p.ensemble_name}')
                     if p.ensemble_model.weight_logits:
                         p_names_abbrev[-1] += '_weight_logits'
                     else:
@@ -143,7 +155,7 @@ if __name__ == '__main__':
                 else:
                     p_names_abbrev.append(p.name)
             save_fig_title = f'{p_names_abbrev[0]}__{p_names_abbrev[1]}'
-            if type(player_1) == va.SavedRLAgent or type(player_1) == va.SavedRLAgentEnsemble:
+            if type(player_1) in (va.SavedRLAgent, va.SavedRLAgentEnsemble, va.SavedRLAgentMultiObsEnsemble):
                 save_fig_folder = f'saved_figures/{p_names_abbrev[0]}'
             else:
                 save_fig_folder = 'saved_figures'

@@ -466,15 +466,80 @@ class GraphNNActorCriticEnsemble(nn.Module):
             requires_grad=False
         )
 
-    def forward(self, states):
+    def uncombined_forward(self, states):
         logits = []
         values = []
         for m in self.models:
             l, v = m(states)
             logits.append(l)
             values.append(v)
-        logits = torch.stack(logits, dim=-1)
-        values = torch.stack(values, dim=-1)
+        return torch.stack(logits, dim=-1), torch.stack(values, dim=-1)
+
+    def forward(self, states):
+        logits, values = self.uncombined_forward(states)
+        if self.learnable_weights_model is not None:
+            values, weights = self.learnable_weights_model(logits, values)
+        else:
+            values = values.mean(dim=-1)
+            weights = torch.ones_like(logits) / logits.shape[-1]
+
+        # Original way:
+        if self.weight_logits:
+            logits = torch.sum(logits * weights, dim=-1)
+            probs = F.softmax(logits, dim=-1)
+        else:
+            probs = torch.sum(F.softmax(logits, dim=-2) * weights, dim=-1)
+        return probs, values
+
+    def choose_best_action(self, states):
+        with torch.no_grad():
+            probs, _ = self.forward(states)
+            return probs.argmax(dim=-1)
+
+    def sample_action(self, states, train=False):
+        if train:
+            probs, values = self.forward(states)
+        else:
+            with torch.no_grad():
+                probs, values = self.forward(states)
+        seq_len, n_envs, n_players, n_bandits = probs.shape
+        m = distributions.Categorical(probs.view(seq_len * n_envs * n_players, n_bandits))
+        sampled_actions = m.sample().view(seq_len, n_envs, n_players)
+        if train:
+            return sampled_actions, (probs, values)
+        else:
+            return sampled_actions
+
+
+class GraphNNActorCriticMultiObsEnsemble(nn.Module):
+    def __init__(self, obs_types_to_models_dict, learnable_weights_model=None, weight_logits=False):
+        super().__init__()
+        self.obs_types = []
+        self.ensemble_model = nn.ModuleList()
+        for obs_type, models in obs_types_to_models_dict.items():
+            self.obs_types.append(obs_type)
+            self.ensemble_model.append(GraphNNActorCriticEnsemble(models, weight_logits=weight_logits))
+        self.learnable_weights_model = learnable_weights_model
+        self.weight_logits = weight_logits
+        # Register weight_logits to prevent later accidentally loading the model with the wrong setting
+        self.register_weight_logits = nn.Parameter(
+            torch.zeros(int(self.weight_logits) + 1),
+            requires_grad=False
+        )
+
+    def uncombined_forward(self, states):
+        logits = []
+        values = []
+        assert type(states) in (list, tuple), 'Is the env obs_type set correctly?'
+        assert len(self.ensemble_model) == len(states), 'Is the env obs_type set correctly?'
+        for m, s in zip(self.ensemble_model, states):
+            l, v = m.uncombined_forward(s)
+            logits.append(l)
+            values.append(v)
+        return torch.cat(logits, dim=-1), torch.cat(values, dim=-1)
+
+    def forward(self, states):
+        logits, values = self.uncombined_forward(states)
         if self.learnable_weights_model is not None:
             values, weights = self.learnable_weights_model(logits, values)
         else:
@@ -513,7 +578,6 @@ class GraphNNPolicy(nn.Module):
     def __init__(self, in_features, n_nodes, n_hidden_layers, layer_sizes, layer_class,
                  activation_func=nn.ReLU(), skip_connection_n=1, normalize=False):
         super().__init__()
-
         # Define network
         if type(layer_sizes) == int:
             layer_sizes = [layer_sizes] * (n_hidden_layers + 1)

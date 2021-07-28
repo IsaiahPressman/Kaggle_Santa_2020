@@ -18,17 +18,17 @@ import vectorized_agents as va
 
 DEVICE = torch.device('cuda')
 
+
 preprocessing_layer = gnn.GraphNNPreprocessingLayer(gnn.GraphNNResidualBase([
-    gnn.SmallFullyConnectedGNNLayer(60, 4, 32),
-    #gnn.SmallFullyConnectedGNNLayer(60, 32, 32)
+    gnn.SmallFullyConnectedGNNLayer(60, 4, 16),
+    gnn.SmallFullyConnectedGNNLayer(60, 16, 16, activation_func=nn.Identity())
 ], skip_connection_n=1), mean_out=True, ravel_out=False)
 
 graph_nn_kwargs = dict(
     n_nodes=100,
-    in_features=32,
+    in_features=16,
     n_hidden_layers=2,
-    #preprocessing_layer=preprocessing_layer, ###########################################################
-    preprocessing_layer=preprocessing_layer,
+    preprocessing_layer=preprocessing_layer, ################################################################
     layer_sizes=[64],
     layer_class=gnn.FullyConnectedGNNLayer,
     normalize=False,
@@ -43,8 +43,8 @@ loaded_state_dicts = pickle.loads(state_dict_bytes)
 model.load_state_dict(loaded_state_dicts['model_state_dict'])
 """
 model.to(device=DEVICE)
-#optimizer = torch.optim.Adadelta(model.parameters())
-
+optimizer = torch.optim.Adam(model.parameters())
+"""
 optimizer = AdaBelief(model.parameters(),
                       lr=1e-4,
                       betas=(0.9, 0.999),
@@ -55,7 +55,7 @@ optimizer = AdaBelief(model.parameters(),
                       rectify=True,
                       fixed_decay=False,
                       amsgrad=False,
-                      print_change_log=False)
+                      print_change_log=False)"""
 
 env_kwargs = dict(
     env_device=DEVICE,
@@ -73,19 +73,19 @@ validation_env_kwargs_base = dict(
 validation_opponent_env_kwargs = [
     #dict(
     #    opponent=va.BasicThompsonSampling(),
-    #    opponent_obs_type=ve.SUMMED_OBS
+    #    opp_obs_type=ve.SUMMED_OBS
     #),
     dict(
         opponent=va.PullVegasSlotMachinesImproved(),
-        opponent_obs_type=ve.SUMMED_OBS
+        opp_obs_type=ve.SUMMED_OBS
     ),
     dict(
         opponent=va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE, deterministic_policy=True),
-        opponent_obs_type=ve.SUMMED_OBS
+        opp_obs_type=ve.SUMMED_OBS
     ),
     dict(
-        opponent=va.SavedRLAgent('awac_agent_small_8_64_32_1_norm_v2-750', device=DEVICE, deterministic_policy=True),
-        opponent_obs_type=ve.SUMMED_OBS_WITH_TIMESTEP
+        opponent=va.SavedRLAgent('awac_agent_small_8_64_32_1_norm_v1-230', device=DEVICE, deterministic_policy=True),
+        opp_obs_type=ve.SUMMED_OBS_WITH_TIMESTEP
     )
 ]
 validation_env_kwargs_dicts = []
@@ -93,7 +93,7 @@ for opponent_kwargs in validation_opponent_env_kwargs:
     validation_env_kwargs_dicts.append(copy(validation_env_kwargs_base))
     validation_env_kwargs_dicts[-1].update(opponent_kwargs)
 rl_alg_kwargs = dict(
-    clip_grads=None,
+    clip_grads=10. if type(optimizer) != AdaBelief else None,
     play_against_past_selves=False,
     n_past_selves=4,
     checkpoint_freq=100,
@@ -126,7 +126,7 @@ initial_opponent_pool = [
     #va.SavedRLAgent('a3c_agent_v3', **rl_agent_opp_kwargs),
     #va.SavedRLAgent('a3c_agent_v4-162', **rl_agent_opp_kwargs),
     va.SavedRLAgent('a3c_agent_small_8_32-790', **rl_agent_opp_kwargs),
-    va.SavedRLAgent('awac_agent_small_8_64_32_1_norm_v2-750', **rl_agent_opp_kwargs)
+    va.SavedRLAgent('awac_agent_small_8_64_32_1_norm_v1-230', **rl_agent_opp_kwargs)
 ]
 if type(optimizer) == torch.optim.SGD:
     optimizer_name = 'sgd_'
@@ -160,10 +160,10 @@ a3c_alg = A3CVectorized(model_constructor, optimizer, env_kwargs['obs_type'],
 this_script = Path(__file__).absolute()
 shutil.copy(this_script, a3c_alg.exp_folder / f'_{this_script.name}')
 
-env_kwargs['n_envs'] = 20
+env_kwargs['n_envs'] = 8
 #env_kwargs['opponent'] = va.MultiAgent(initial_opponent_pool)
 #env_kwargs['opponent'] = va.BasicThompsonSampling()
-#env_kwargs['opponent_obs_type'] = ve.SUMMED_OBS
+#env_kwargs['opp_obs_type'] = ve.SUMMED_OBS
 try:
     a3c_alg.train(n_episodes=100000, **rl_train_kwargs, **env_kwargs)
 except KeyboardInterrupt:

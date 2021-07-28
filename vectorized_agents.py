@@ -16,8 +16,8 @@ def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, display_out=True, **en
     assert 'opponent' not in env_kwargs.keys(), 'Pass opponent as p2 arg, not as opponent kwarg'
     if 'obs_type' not in env_kwargs.keys():
         env_kwargs['obs_type'] = p1.obs_type
-    if 'opponent_obs_type' not in env_kwargs.keys():
-        env_kwargs['opponent_obs_type'] = p2.obs_type
+    if 'opp_obs_type' not in env_kwargs.keys():
+        env_kwargs['opp_obs_type'] = p2.obs_type
     if p1_name is None:
         try:
             p1_name = p1.name
@@ -29,6 +29,8 @@ def run_vectorized_vs(p1, p2, p1_name=None, p2_name=None, display_out=True, **en
         except AttributeError:
             pass
 
+    p1.reset()
+    p2.reset()
     rewards = []
     vs_env = ve.KaggleMABEnvTorchVectorized(opponent=p2, **env_kwargs)
     s, r, _, _ = vs_env.reset()
@@ -459,6 +461,112 @@ class SavedRLAgentEnsemble(VectorizedAgent):
         return actions.to(device=states_device)
 
 
+class SavedRLAgentMultiObsEnsemble(VectorizedAgent):
+    def __init__(self, ensemble_names, device=torch.device('cuda'), weight_logits=False, deterministic_policy=False):
+        super().__init__()
+        self.ensemble_names = ensemble_names
+        self.name = f'SavedRLAgentMultiObsEnsemble: {"__".join(self.ensemble_names)}'
+        if weight_logits:
+            self.name += '_weight_logits'
+        else:
+            self.name += '_weight_probs'
+        if deterministic_policy:
+            self.name += '_deterministic'
+        else:
+            self.name += '_stochastic'
+        self.weight_logits = weight_logits
+        self.deterministic_policy = deterministic_policy
+        obs_types_to_models_dict = {}
+        for en in ensemble_names:
+            ensemble = SavedRLAgentEnsemble(
+                en,
+                device=device,
+                weight_logits=weight_logits,
+                deterministic_policy=deterministic_policy
+            )
+            obs_type = ensemble.obs_type
+            if obs_type not in obs_types_to_models_dict.keys():
+                obs_types_to_models_dict[obs_type] = []
+            for model in ensemble.ensemble_model.models:
+                obs_types_to_models_dict[obs_type].append(model)
+        self.ensemble_model = gnn.GraphNNActorCriticMultiObsEnsemble(
+            obs_types_to_models_dict,
+            weight_logits=weight_logits
+        )
+        self.ensemble_model.to(device=device)
+        self.ensemble_model.eval()
+        self.device = device
+        self.obs_type = self.ensemble_model.obs_types
+        if deterministic_policy:
+            self.act_func = self.ensemble_model.choose_best_action
+        else:
+            self.act_func = self.ensemble_model.sample_action
+
+    def __call__(self, states):
+        states_device = states[0].device
+        actions = self.act_func([s.to(device=self.device).unsqueeze(0) for s in states]).squeeze(0)
+        return actions.to(device=states_device)
+
+    @property
+    def ensemble_name(self):
+        return '__'.join(self.ensemble_names)
+
+
+class MultiObsFixedTimeEnsemble:
+    def __init__(self, timesteps, agents, agents_obs_types):
+        super().__init__()
+        self.timesteps = timesteps
+        self.agents = agents
+        self.agents_obs_types = agents_obs_types
+        self.name = f'MultiObsFixedTimeEnsemble: {"__".join([a.name for a in self.agents])}'
+        assert len(self.timesteps) == len(self.agents)
+        assert len(self.agents) == len(self.agents_obs_types)
+        assert self.timesteps[0] == 0, 'self.timesteps describes the starting timestep for using each model'
+        assert self.timesteps == sorted(self.timesteps), 'self.timesteps should be in ascending order'
+
+        self.current_step = 0
+        self.obs_type = []
+        for ot in self.agents_obs_types:
+            if type(ot) != str:
+                for ot_ in ot:
+                    if ot_ not in self.obs_type:
+                        self.obs_type.append(ot_)
+            else:
+                if ot not in self.obs_type:
+                    self.obs_type.append(ot)
+        self.obs_types_idx_dict = {}
+        for idx, ot in enumerate(self.obs_type):
+            self.obs_types_idx_dict[ot] = idx
+        self.reset()
+
+    def __call__(self, states):
+        current_agent_idx = None
+        for idx, t in reversed(list(enumerate(self.timesteps))):
+            if self.current_step >= t:
+                current_agent_idx = idx
+                break
+        self.current_step += 1
+        states = self.extract_agent_obs_type(current_agent_idx, states)
+        return self.agents[current_agent_idx](states)
+
+    def extract_agent_obs_type(self, agent_idx, states):
+        target_obs_type = self.agents_obs_types[agent_idx]
+        if type(target_obs_type) == str:
+            idx = self.obs_types_idx_dict[target_obs_type]
+            return states[idx]
+        else:
+            new_states = []
+            for ot in target_obs_type:
+                idx = self.obs_types_idx_dict[ot]
+                new_states.append(states[idx])
+            return new_states
+
+    def reset(self):
+        self.current_step = 0
+        for a in self.agents:
+            a.reset()
+
+
 class RLModelWrapperAgent(VectorizedAgent):
     def __init__(self, model, obs_type, name=None, deterministic_policy=False):
         super().__init__()
@@ -474,4 +582,8 @@ class RLModelWrapperAgent(VectorizedAgent):
             self.act_func = self.model.sample_action
 
     def __call__(self, states):
-        return self.act_func(states.unsqueeze(0)).squeeze(0)
+        if type(states) in (list, tuple):
+            states = [s.unsqueeze(0) for s in states]
+        else:
+            states = states.unsqueeze(0)
+        return self.act_func(states).squeeze(0)

@@ -56,7 +56,7 @@ class KaggleMABEnvTorchVectorized:
         reward_type=EVERY_STEP_TRUE,
         obs_type=SUMMED_OBS,
         opponent=None,
-        opponent_obs_type=None,
+        opp_obs_type=None,
         normalize_reward=False,
         env_device=torch.device('cuda'),
         out_device=torch.device('cuda'),
@@ -80,15 +80,25 @@ class KaggleMABEnvTorchVectorized:
             raise ValueError('n_players > 2 is not currently supported')
         self.reward_type = reward_type
         self.obs_type = obs_type
-        assert self.obs_type in OBS_TYPES, f'obs_type "{self.obs_type}" is not recognized'
+        self.multi_obs_type = type(self.obs_type) != str
+        if self.multi_obs_type:
+            for ot in self.obs_type:
+                assert ot in OBS_TYPES, f'obs_type "{ot}" is not recognized'
+        else:
+            assert self.obs_type in OBS_TYPES, f'obs_type "{self.obs_type}" is not recognized'
         self.opponent = opponent
         if self.opponent is not None:
             assert self.n_players == 2
-        if opponent_obs_type is None:
-            self.opponent_obs_type = self.obs_type
+        if opp_obs_type is None:
+            self.opp_obs_type = self.obs_type
         else:
-            self.opponent_obs_type = opponent_obs_type
-        assert self.opponent_obs_type in OBS_TYPES, f'opponent_obs_type "{self.opponent_obs_type}" is not recognized'
+            self.opp_obs_type = opp_obs_type
+        self.opp_multi_obs_type = type(self.opp_obs_type) != str
+        if self.opp_multi_obs_type:
+            for ot in self.opp_obs_type:
+                assert ot in OBS_TYPES, f'opp_obs_type "{ot}" is not recognized'
+        else:
+            assert self.opp_obs_type in OBS_TYPES, f'opp_obs_type "{self.opp_obs_type}" is not recognized'
         if not normalize_reward or self.reward_type in (EVERY_STEP_EV_ZEROSUM, END_OF_GAME_TRUE):
             self.r_norm = 1.
         else:
@@ -111,10 +121,32 @@ class KaggleMABEnvTorchVectorized:
             LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED: 1.,
             SUMMED_AND_DECAY: 1.,
         }
-        if self.obs_type not in self.obs_norm_dict.keys():
-            raise RuntimeError(f'obs_type "{self.obs_type}" does not have a defined obs_norm')
-        if self.opponent_obs_type not in self.obs_norm_dict.keys():
-            raise RuntimeError(f'opponent_obs_type "{self.opponent_obs_type}" does not have a defined obs_norm')
+        if self.multi_obs_type:
+            for ot in self.obs_type:
+                if ot not in self.obs_norm_dict.keys():
+                    raise RuntimeError(f'obs_type "{ot}" does not have a defined obs_norm')
+        else:
+            if self.obs_type not in self.obs_norm_dict.keys():
+                raise RuntimeError(f'obs_type "{self.obs_type}" does not have a defined obs_norm')
+        if self.opp_multi_obs_type:
+            for ot in self.opp_obs_type:
+                if ot not in self.obs_norm_dict.keys():
+                    raise RuntimeError(f'opp_obs_type "{ot}" does not have a defined obs_norm')
+        else:
+            if self.opp_obs_type not in self.obs_norm_dict.keys():
+               raise RuntimeError(f'opp_obs_type "{self.opp_obs_type}" does not have a defined obs_norm')
+
+        all_obs_types = []
+        if self.multi_obs_type:
+            for ot in self.obs_type:
+                all_obs_types.append(ot)
+        else:
+            all_obs_types.append(self.obs_type)
+        if self.opp_multi_obs_type:
+            for ot in self.opp_obs_type:
+                all_obs_types.append(ot)
+            else:
+                all_obs_types.append(self.opp_obs_type)
         self.timestep = None
         self.orig_thresholds = None
         self.player_n_pulls = None
@@ -123,40 +155,58 @@ class KaggleMABEnvTorchVectorized:
         self.last_rewards = None
         self.all_pulls_onehot = None
         self.all_pull_rewards_onehot = None
-        self.store_every_step = (
-                self.obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED) or
-                self.opponent_obs_type in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED)
-        )
+        self.store_every_step = False
+        for ot in all_obs_types:
+            if ot in (EVERY_STEP_OBS, EVERY_STEP_OBS_RAVELLED):
+                self.store_every_step = True
+                break
         self.last_10_pulls = None
         self.last_10_rewards = None
-        self.store_last_ten = self.obs_type == SUMMED_AND_LAST_TEN or self.opponent_obs_type == SUMMED_AND_LAST_TEN
+        self.store_last_ten = False
+        for ot in all_obs_types:
+            if ot == SUMMED_AND_LAST_TEN:
+                self.store_last_ten = True
+                break
         self.last_60_pull_events = None
         self.last_60_reward_events = None
         self.last_60_event_timestamps = None
         self.last_60_event_indices = None
-        self.store_events = (
-                self.obs_type in (LAST_60_EVENTS_OBS,
-                                  LAST_60_EVENTS_OBS_RAVELLED,
-                                  LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED) or
-                self.opponent_obs_type in (LAST_60_EVENTS_OBS,
-                                           LAST_60_EVENTS_OBS_RAVELLED,
-                                           LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED)
-        )
+        self.store_events = True
+        for ot in all_obs_types:
+            if ot in (LAST_60_EVENTS_OBS,
+                      LAST_60_EVENTS_OBS_RAVELLED,
+                      LAST_60_EVENTS_AND_SUMMED_OBS_RAVELLED):
+                self.store_events = True
+                break
         self.reset()
         
     def _single_player_decorator(f):
         @wraps(f)
         def wrapped(self, *args, **kwargs):
+            original_out = f(self, *args, **kwargs)
             if self.opponent is not None:
-                return [out[:,0].unsqueeze(1) if torch.is_tensor(out) else out for out in f(self, *args, **kwargs)]
+                if self.multi_obs_type:
+                    obs_out = [obs[:, 0].unsqueeze(1) for obs in original_out[0]]
+                    other_outs = [out[:, 0].unsqueeze(1) if torch.is_tensor(out) else out
+                                  for out in original_out[1:]]
+                    return [obs_out, *other_outs]
+                else:
+                    return [out[:, 0].unsqueeze(1) if torch.is_tensor(out) else out
+                            for out in original_out]
             else:
-                return f(self, *args, **kwargs)
+                return original_out
         return wrapped
     
     def _out_device_decorator(f):
         @wraps(f)
         def wrapped(self, *args, **kwargs):
-            return [out.to(self.out_device) if torch.is_tensor(out) else out for out in f(self, *args, **kwargs)]
+            original_out = f(self, *args, **kwargs)
+            if self.multi_obs_type:
+                obs_out = [obs.to(self.out_device) for obs in original_out[0]]
+                other_outs = [out.to(self.out_device) if torch.is_tensor(out) else out for out in original_out[1:]]
+                return [obs_out, *other_outs]
+            else:
+                return [out.to(self.out_device) if torch.is_tensor(out) else out for out in original_out]
         return wrapped
     
     @_single_player_decorator
@@ -207,9 +257,11 @@ class KaggleMABEnvTorchVectorized:
     def step(self, actions):
         actions = actions.to(self.env_device)
         if self.opponent is not None:
-            opp_obs = self._get_obs(self.opponent_obs_type)
-            opp_obs = opp_obs * self.opponent_obs_norm
-            opp_actions = self.opponent(opp_obs[:, 1].unsqueeze(1))
+            if self.opp_multi_obs_type:
+                opp_obs = [self._get_obs(ot)[:, 1].unsqueeze(1) for ot in self.opp_obs_type]
+            else:
+                opp_obs = self._get_obs(self.opp_obs_type)[:, 1].unsqueeze(1)
+            opp_actions = self.opponent(opp_obs)
             actions = torch.cat([actions, opp_actions], dim=1)
         if actions.shape != (self.n_envs, self.n_players):
             raise ValueError(f'actions.shape was: {actions.shape}, should have been {(self.n_envs, self.n_players)}')
@@ -348,7 +400,10 @@ class KaggleMABEnvTorchVectorized:
     
     @property
     def obs(self):
-        return self._get_obs(self.obs_type) * self.obs_norm
+        if self.multi_obs_type:
+            return [self._get_obs(ot) for ot in self.obs_type]
+        else:
+            return self._get_obs(self.obs_type)
 
     def _get_obs(self, obs_type):
         if obs_type == SUMMED_OBS:
@@ -377,7 +432,7 @@ class KaggleMABEnvTorchVectorized:
             obs = self._get_decaying_obs()
         else:
             raise ValueError(f'Unsupported obs_type: {obs_type}')
-        return obs
+        return obs * self.obs_norm_dict[obs_type]
 
     def _get_summed_obs(self):
         # Each actor receives a tensor of shape: (1, 1, n_bandits, n_players+1) (including pull_rewards)
@@ -594,14 +649,6 @@ class KaggleMABEnvTorchVectorized:
     @property
     def thresholds(self):
         return self.orig_thresholds * (self.decay_rate ** self.player_n_pulls.sum(dim=1))
-
-    @property
-    def obs_norm(self):
-        return self.obs_norm_dict[self.obs_type]
-
-    @property
-    def opponent_obs_norm(self):
-        return self.obs_norm_dict[self.opponent_obs_type]
 
     @property
     def done(self):

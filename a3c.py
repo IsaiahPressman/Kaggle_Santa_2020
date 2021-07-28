@@ -86,8 +86,8 @@ class A3CVectorized:
     def train(self, n_episodes, batch_size=30, gamma=0.99, **env_kwargs):
         if self.play_against_past_selves and 'opponent' in env_kwargs.keys():
             raise RuntimeError('Cannot play against past selves when opponent is defined')
-        if self.play_against_past_selves and 'opponent_obs_type' in env_kwargs.keys():
-            raise RuntimeError('Cannot play against past selves when opponent_obs_type is defined')
+        if self.play_against_past_selves and 'opp_obs_type' in env_kwargs.keys():
+            raise RuntimeError('Cannot play against past selves when opp_obs_type is defined')
 
         for ep_num in tqdm.trange(n_episodes):
             self.model.train()
@@ -98,7 +98,7 @@ class A3CVectorized:
                 opponents.reset()
                 self.env = ve.KaggleMABEnvTorchVectorized(
                     opponent=opponents,
-                    opponent_obs_type=opponents.obs_type,
+                    opp_obs_type=opponents.obs_type,
                     **env_kwargs)
             else:
                 self.env = ve.KaggleMABEnvTorchVectorized(**env_kwargs)
@@ -108,7 +108,11 @@ class A3CVectorized:
             actor_losses = []
             critic_losses = []
             step_count = 1
-            a, (l, v) = self.model.sample_action(next_s.to(device=self.device).unsqueeze(0), train=True)
+            if type(next_s) in (list, tuple):
+                a, (l, v) = self.model.sample_action([s_.to(device=self.device).unsqueeze(0)
+                                                      for s_ in next_s], train=True)
+            else:
+                a, (l, v) = self.model.sample_action(next_s.to(device=self.device).unsqueeze(0), train=True)
             while not self.env.done:
                 next_s, r, done, info_dict = self.env.step(a.squeeze(0))
 
@@ -119,7 +123,11 @@ class A3CVectorized:
 
                 if self.recurrent_model and (step_count % batch_size == 0 or done):
                     self.model.detach_hidden_states()
-                a, (l, v) = self.model.sample_action(next_s.to(device=self.device).unsqueeze(0), train=True)
+                if type(next_s) in (list, tuple):
+                    a, (l, v) = self.model.sample_action([s_.to(device=self.device).unsqueeze(0)
+                                                          for s_ in next_s], train=True)
+                else:
+                    a, (l, v) = self.model.sample_action(next_s.to(device=self.device).unsqueeze(0), train=True)
                 if step_count % batch_size == 0 or done:
                     if done:
                         v_next_s = torch.zeros_like(buffer_r[-1])
@@ -292,6 +300,10 @@ class A3CVectorized:
 
     def run_validation(self):
         self.model.eval()
+        if self.deterministic_validation_policy:
+            get_action_func = self.model.choose_best_action
+        else:
+            get_action_func = self.model.sample_action
         if len(self.validation_env_kwargs_dicts) > 0:
             print(f'Validating model performance in {len(self.validation_env_kwargs_dicts)} environments')
             episode_reward_sums = []
@@ -304,10 +316,11 @@ class A3CVectorized:
                 s, r, done, info_dict = val_env.reset()
                 episode_reward_sums.append(r)
                 while not done:
-                    if self.deterministic_validation_policy:
-                        a = self.model.choose_best_action(s.to(device=self.device).unsqueeze(0))
+                    if type(s) in (list, tuple):
+                        a = get_action_func([s_.to(device=self.device).unsqueeze(0)
+                                             for s_ in s])
                     else:
-                        a = self.model.sample_action(s.to(device=self.device).unsqueeze(0))
+                        a = get_action_func(s.to(device=self.device).unsqueeze(0))
                     next_s, r, done, info_dict = val_env.step(a.squeeze(0))
                     s = next_s
                     episode_reward_sums[-1] += r
@@ -321,6 +334,9 @@ class A3CVectorized:
 
     def log_validation_episodes(self, episode_reward_sums, final_info_dicts):
         assert len(episode_reward_sums) == len(final_info_dicts)
+        # Lazily initialize summary_writer
+        if self.summary_writer is None:
+            self.summary_writer = SummaryWriter(self.exp_folder)
         n_val_envs = len(episode_reward_sums)
         for i, ers, fid in zip(range(n_val_envs), episode_reward_sums, final_info_dicts):
             opponent = self.validation_env_kwargs_dicts[i].get('opponent')

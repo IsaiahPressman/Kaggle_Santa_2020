@@ -90,19 +90,19 @@ validation_env_kwargs_base = dict(
 validation_opponent_env_kwargs = [
     dict(
         opponent=va.BasicThompsonSampling(OBS_NORM),
-        opponent_obs_type=ve.SUMMED_OBS
+        opp_obs_type=ve.SUMMED_OBS
     ),
     dict(
         opponent=va.PullVegasSlotMachines(OBS_NORM),
-        opponent_obs_type=ve.SUMMED_OBS
+        opp_obs_type=ve.SUMMED_OBS
     ),
     dict(
         opponent=va.SavedRLAgent('a3c_agent_small_8_32-790', device=DEVICE, deterministic_policy=True),
-        opponent_obs_type=ve.SUMMED_OBS
+        opp_obs_type=ve.SUMMED_OBS
     ),
     #dict(
     #    opponent=va.SavedRLAgent('awac_agent_4_20_1_norm_v1-215', device=DEVICE, deterministic_policy=True),
-    #    opponent_obs_type=ve.SUMMED_OBS_WITH_TIMESTEP
+    #    opp_obs_type=ve.SUMMED_OBS_WITH_TIMESTEP
     #)
 ]
 

@@ -39,7 +39,7 @@ env_kwargs = dict(
     normalize_reward=False,
     reward_type=ve.EVERY_STEP_EV_ZEROSUM,
     obs_type=ve.SUMMED_AND_DECAY,
-    #opponent_obs_type=ve.SUMMED_AND_DECAY
+    #opp_obs_type=ve.SUMMED_AND_DECAY
 )
 rl_alg_kwargs = dict(
     batch_size=30,
