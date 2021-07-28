@@ -5,6 +5,9 @@
       <sourceFolder url="file://$MODULE_DIR$" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/.ipynb_checkpoints" />
       <excludeFolder url="file://$MODULE_DIR$/runs" />
+      <excludeFolder url="file://$MODULE_DIR$/rl_agents" />
+      <excludeFolder url="file://$MODULE_DIR$/handcrafted_agents" />
+      <excludeFolder url="file://$MODULE_DIR$/episode_scraping" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.7 (pt14)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
